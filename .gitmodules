@@ -1,0 +1,3 @@
+[submodule "vendor/seedsong-base"]
+	path = vendor/seedsong-base
+	url = https://github.com/Officeyutong/seedsong-base.git
