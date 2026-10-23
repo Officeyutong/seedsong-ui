@@ -65,10 +65,10 @@ The application is a static site. Production output in `dist/` includes the JS/W
 
 ## Automated build and publication
 
-[Build and publish to develop](.github/workflows/publish-develop.yml) runs on every push to `main`. It can also be started manually from the Actions tab when `main` is selected.
+[Build and publish to deploy](.github/workflows/publish-deploy.yml) runs on every push to `main`. It can also be started manually from the Actions tab when `main` is selected.
 
 The workflow checks out the pinned submodules, installs Linux build dependencies, Node.js 24, stable Rust, the `wasm32-unknown-unknown` target, and wasm-pack. It then runs `npm run setup` to build `seedsong-js` from source and install UI dependencies before running `npm run build`. No prebuilt local WASM files or npm lockfiles are required.
 
-After a successful build, the workflow publishes the contents of `dist/` at the root of `develop`, including the Worker and specification assets. `develop` is reserved for build output: files absent from the new build are removed, and existing publication history is preserved. The branch is created on the first publication if it does not already exist. Failed builds do not publish, and newer runs cancel older runs.
+After a successful build, the workflow publishes the contents of `dist/` at the root of `deploy`, including the Worker and specification assets. `deploy` is reserved for build output: files absent from the new build are removed, and existing publication history is preserved. The branch is created on the first publication if it does not already exist. Failed builds do not publish, and newer runs cancel older runs.
 
-Publication uses [actions-gh-pages](https://github.com/peaceiris/actions-gh-pages) with the built-in `GITHUB_TOKEN` and job-level `contents: write` permission. No additional token secret is required. Repository rules for `develop` must permit the workflow's publication commits. This workflow updates the artifact branch; it does not configure a hosting provider or run the test suites.
+Publication uses [actions-gh-pages](https://github.com/peaceiris/actions-gh-pages) with the built-in `GITHUB_TOKEN` and job-level `contents: write` permission. No additional token secret is required. Repository rules for `deploy` must permit the workflow's publication commits. This workflow updates the artifact branch; it does not configure a hosting provider or run the test suites.

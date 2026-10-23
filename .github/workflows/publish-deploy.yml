@@ -1,4 +1,4 @@
-name: Build and publish to develop
+name: Build and publish to deploy
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: publish-develop
+  group: publish-deploy
   cancel-in-progress: true
 
 permissions:
@@ -57,11 +57,11 @@ jobs:
           npm run build
           test -s dist/index.html
 
-      - name: Publish build output to develop
+      - name: Publish build output to deploy
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: develop
+          publish_branch: deploy
           publish_dir: ./dist
           keep_files: false
           force_orphan: false
