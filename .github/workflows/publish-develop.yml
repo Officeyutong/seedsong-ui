@@ -1,0 +1,68 @@
+name: Build and publish to develop
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-develop
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out source and pinned submodules
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential pkg-config libssl-dev curl ca-certificates
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install Rust and the WebAssembly target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      # Build the local file dependency before the UI resolves its JS and types.
+      # setup also installs the upstream workspace's build-time dependencies.
+      - name: Build seedsong-js and install UI dependencies
+        run: npm run setup
+
+      - name: Build UI
+        run: |
+          npm run build
+          test -s dist/index.html
+
+      - name: Publish build output to develop
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: develop
+          publish_dir: ./dist
+          keep_files: false
+          force_orphan: false
+          commit_message: 'Build main: ${{ github.sha }}'
