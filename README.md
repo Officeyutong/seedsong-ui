@@ -41,8 +41,11 @@ Browser tests open a visible browser. Install the browser once with `npx playwri
 - Preview SVG artwork and musical traits from the pinned DOB/0 and DOB/1 patterns.
 - Render WAV in a Worker, with cancellation, loading states, and stale-result detection.
 - Play, seek, change volume, loop, and download audio.
-- Download the exact SVG string and a DNA text file containing render settings.
+- Select music v2 (default) or legacy v1 for reproducible playback and comparison.
+- Download the exact SVG string and a DNA text file containing the music version and render settings.
 - Responsive layouts, keyboard-accessible controls, light and dark themes.
+
+DNA exports describe the current DNA and sound settings. After a matching render, their music version comes from the returned WAV metadata. If you edit DNA or settings, the previous audio is marked stale and its WAV download is disabled; the DNA export describes the new settings awaiting rendering. To recreate an export, paste its `dna` and restore its `settings`, including `musicVersion`, in Sound settings.
 
 The initial DNA is the specification's reference example. Audio rendering starts only when requested. The DNA-selected timbre remains a collectible trait even when the piano playback override is selected.
 

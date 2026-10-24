@@ -26,7 +26,7 @@ export default function HelpView() {
                     ],
                     [
                         "04 · Save your creation",
-                        "Download the SVG, WAV, and DNA text file. The text file also records your sound settings. Save both DNA and settings to recreate the piece. Floating-point audio samples may vary across platforms.",
+                        "Download the SVG, WAV, and DNA text file. The text file also records your music version and sound settings. Select that version in Sound settings and restore the saved settings to recreate the piece. Floating-point audio samples may vary across platforms.",
                     ],
                     [
                         "Randomization and seeds",
@@ -44,7 +44,8 @@ export default function HelpView() {
                 ))}
                 <Box sx={{ pt: 2 }}>
                     <Typography variant="body2">
-                        Protocols: seedsong-music/1 · seedsong-pattern/1
+                        Default protocols: seedsong-music/2 · seedsong-pattern/1. Legacy music v1 is
+                        available in Sound settings.
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                         The artwork patterns are read at runtime from the specification included

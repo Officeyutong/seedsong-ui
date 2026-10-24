@@ -34,6 +34,24 @@ export default function RenderSettings({ value, onChange }: Props) {
             </AccordionSummary>
             <AccordionDetails>
                 <Stack spacing={2.5}>
+                    <TextField
+                        select
+                        label="Music version"
+                        fullWidth
+                        value={value.musicVersion}
+                        helperText="Use the saved version to reproduce a piece. Version 1 keeps the original algorithm."
+                        onChange={(event) =>
+                            onChange({
+                                ...value,
+                                musicVersion: Number(
+                                    event.target.value,
+                                ) as Settings["musicVersion"],
+                            })
+                        }
+                    >
+                        <MenuItem value={2}>Version 2 · Refined melody (default)</MenuItem>
+                        <MenuItem value={1}>Version 1 · Legacy melody</MenuItem>
+                    </TextField>
                     <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                         <TextField
                             select

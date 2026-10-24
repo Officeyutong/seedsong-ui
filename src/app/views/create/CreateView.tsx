@@ -34,7 +34,13 @@ import CoverPreview from "./CoverPreview";
 import TraitList from "./TraitList";
 import RenderSettings from "./RenderSettings";
 import MusicPlayer from "./MusicPlayer";
-const initialSettings: Settings = { timbre: "spec", sampleRate: 44100, reverb: 0.18, loop: false };
+const initialSettings: Settings = {
+    musicVersion: 2,
+    timbre: "spec",
+    sampleRate: 44100,
+    reverb: 0.18,
+    loop: false,
+};
 export default function CreateView() {
     const [raw, setRaw] = useState(REFERENCE_DNA);
     const [lastValid, setLastValid] = useState(() => parseDna(REFERENCE_DNA));
@@ -94,7 +100,17 @@ export default function CreateView() {
         const snapshot: RenderSnapshot = { dna, settings: { ...settings } };
         try {
             const wav = await music.renderWav({ dna: snapshot.dna, ...snapshot.settings });
-            setResult({ wav, snapshot });
+            setResult({
+                wav,
+                snapshot: {
+                    dna: wav.dna,
+                    settings: {
+                        ...snapshot.settings,
+                        musicVersion: wav.musicVersion,
+                        sampleRate: wav.sampleRate,
+                    },
+                },
+            });
             setNotice("Your music is ready to play or download.");
         } catch (error) {
             if ((error as Error).name !== "AbortError") setError((error as Error).message);
@@ -397,8 +413,18 @@ export default function CreateView() {
                                             JSON.stringify(
                                                 {
                                                     dna,
-                                                    settings,
-                                                    music: "seedsong-music/1",
+                                                    settings: {
+                                                        ...settings,
+                                                        musicVersion:
+                                                            result && !stale
+                                                                ? result.wav.musicVersion
+                                                                : settings.musicVersion,
+                                                    },
+                                                    music: `seedsong-music/${
+                                                        result && !stale
+                                                            ? result.wav.musicVersion
+                                                            : settings.musicVersion
+                                                    }`,
                                                     pattern: "seedsong-pattern/1",
                                                 },
                                                 null,

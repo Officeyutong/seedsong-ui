@@ -18,6 +18,7 @@ export type Dob1Entry = [
 export type Dob1Pattern = Dob1Entry[];
 export type Traits = Record<string, TraitValue>;
 export interface RenderSettings {
+    musicVersion: 1 | 2;
     timbre: "spec" | "piano";
     sampleRate: number;
     reverb: number;

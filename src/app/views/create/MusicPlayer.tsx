@@ -21,6 +21,7 @@ export default function MusicPlayer({ wav, stale, loop }: Props) {
                 {wav && (
                     <Typography variant="caption" color="text.secondary">
                         {wav.durationSeconds.toFixed(1)}s · {(wav.sampleRate / 1000).toFixed(1)} kHz
+                        {" · "}Music v{wav.musicVersion}
                     </Typography>
                 )}
             </Stack>
