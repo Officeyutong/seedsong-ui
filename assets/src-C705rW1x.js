@@ -1,0 +1,1 @@
+var e=Symbol.for(`@libp2p/transport`),t;(function(e){e[e.FATAL_ALL=0]=`FATAL_ALL`,e[e.NO_FATAL=1]=`NO_FATAL`})(t||={});var n=class extends Event{type;detail;constructor(e,t){super(e),this.type=e,this.detail=t}};export{t as n,e as r,n as t};

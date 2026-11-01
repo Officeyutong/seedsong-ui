@@ -1,0 +1,1 @@
+function e(){}var t=Symbol.for(`@libp2p/service-capabilities`),n=Symbol.for(`@libp2p/service-dependencies`);export{n,e as r,t};
