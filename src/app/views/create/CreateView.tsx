@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Alert,
     Box,
     Button,
     Chip,
     Container,
+    CircularProgress,
     Divider,
     Paper,
     Snackbar,
@@ -24,10 +25,12 @@ import {
 import type { RenderedWav } from "seedsong-js";
 import BusyButton from "../../common/BusyButton";
 import { formatDna, parseDna, REFERENCE_DNA } from "../../common/dna";
-import { decodeTraits, renderSvg } from "../../common/dob";
+import { decodeTraits } from "../../common/dob";
 import { download, nextPaint } from "../../common/download";
 import type { RenderSettings as Settings, RenderSnapshot } from "../../common/types";
 import { useMusicRenderer } from "../../hooks/useMusicRenderer";
+import type { DecoderSession } from "../../decoder/engine";
+import type { CoverResult } from "../../decoder/types";
 import DnaInput from "./DnaInput";
 import DnaWizard from "./DnaWizard";
 import CoverPreview from "./CoverPreview";
@@ -41,7 +44,7 @@ const initialSettings: Settings = {
     reverb: 0.18,
     loop: false,
 };
-export default function CreateView() {
+export default function CreateView({ decoder }: { decoder: DecoderSession }) {
     const [raw, setRaw] = useState(REFERENCE_DNA);
     const [lastValid, setLastValid] = useState(() => parseDna(REFERENCE_DNA));
     const [mode, setMode] = useState<"input" | "wizard">("input");
@@ -54,7 +57,10 @@ export default function CreateView() {
         wav: RenderedWav;
         snapshot: RenderSnapshot;
     } | null>(null);
-    const music = useMusicRenderer();
+    const music = useMusicRenderer(decoder);
+    const [artwork, setArtwork] = useState<(CoverResult & { decoderId: string }) | null>(null);
+    const [coverFailure, setCoverFailure] = useState<{ key: string; message: string } | null>(null);
+    const [coverRetry, setCoverRetry] = useState(0);
     let validation: string | null = null;
     try {
         parseDna(raw);
@@ -62,11 +68,35 @@ export default function CreateView() {
         validation = (error as Error).message;
     }
     const dna = formatDna(lastValid);
-    const traits = useMemo(() => decodeTraits(lastValid), [lastValid]);
-    const svg = useMemo(() => renderSvg(traits), [traits]);
+    const previewTraits = decodeTraits(lastValid);
+    const cover = artwork?.dna === dna && artwork.decoderId === decoder.id ? artwork : null;
+    const traits = cover?.traits ?? previewTraits;
+    const svg = cover?.svg ?? "";
+    const decodeCover = music.cover;
+    const coverKey = `${decoder.id}:${dna}:${music.epoch}:${coverRetry}`;
+    const coverError = coverFailure?.key === coverKey ? coverFailure.message : "";
+    useEffect(() => {
+        let active = true;
+        const timer = setTimeout(() => {
+            decodeCover(dna).then(
+                (result) => {
+                    if (active) setArtwork({ ...result, decoderId: decoder.id });
+                },
+                (error) => {
+                    if (active && (error as Error).name !== "AbortError")
+                        setCoverFailure({ key: coverKey, message: (error as Error).message });
+                },
+            );
+        }, 100);
+        return () => {
+            active = false;
+            clearTimeout(timer);
+        };
+    }, [dna, decoder, decodeCover, coverKey]);
     const stale =
         !!result &&
         (validation !== null ||
+            result.snapshot.decoderId !== decoder.id ||
             result.snapshot.dna !== dna ||
             JSON.stringify(result.snapshot.settings) !== JSON.stringify(settings));
     const acceptDna = (next: Uint8Array) => {
@@ -97,12 +127,13 @@ export default function CreateView() {
     const handleRender = async () => {
         setBusy("render");
         setError(null);
-        const snapshot: RenderSnapshot = { dna, settings: { ...settings } };
+        const snapshot: RenderSnapshot = { dna, settings: { ...settings }, decoderId: decoder.id };
         try {
             const wav = await music.renderWav({ dna: snapshot.dna, ...snapshot.settings });
             setResult({
                 wav,
                 snapshot: {
+                    decoderId: snapshot.decoderId,
                     dna: wav.dna,
                     settings: {
                         ...snapshot.settings,
@@ -300,7 +331,7 @@ export default function CreateView() {
                             16 bars · Stereo WAV
                             {busy === "render"
                                 ? " · You can keep editing. Changes apply to the next render."
-                                : " · The first render loads the music engine."}
+                                : " · Rendering runs in a background Worker."}
                         </Typography>
                         {error && (
                             <Alert severity="error" onClose={() => setError(null)} sx={{ mt: 2 }}>
@@ -358,7 +389,34 @@ export default function CreateView() {
                             Your input is incomplete. Showing the last valid DNA preview.
                         </Alert>
                     )}
-                    <CoverPreview svg={svg} traits={traits} />
+                    {cover ? (
+                        <CoverPreview svg={svg} traits={traits} />
+                    ) : (
+                        <Box
+                            sx={{
+                                aspectRatio: "1",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                bgcolor: "action.hover",
+                                borderRadius: 2.5,
+                            }}
+                        >
+                            {coverError ? (
+                                <Stack spacing={2} sx={{ p: 2 }}>
+                                    <Alert severity="error">{coverError}</Alert>
+                                    <BusyButton onClick={() => setCoverRetry((v) => v + 1)}>
+                                        Retry cover
+                                    </BusyButton>
+                                </Stack>
+                            ) : (
+                                <Stack spacing={2} sx={{ alignItems: "center" }}>
+                                    <CircularProgress size={28} />
+                                    <Typography variant="body2">Generating cover…</Typography>
+                                </Stack>
+                            )}
+                        </Box>
+                    )}
                     <TraitList traits={traits} />
                     <MusicPlayer
                         wav={result?.wav ?? null}
@@ -388,7 +446,7 @@ export default function CreateView() {
                             variant="outlined"
                             startIcon={<ArrowDownwardRounded fontSize="small" />}
                             busy={actionBusy === "svg"}
-                            disabled={!!validation || actionBusy !== null}
+                            disabled={!cover || !!validation || actionBusy !== null}
                             onClick={() =>
                                 void runAction(
                                     "svg",
@@ -413,6 +471,7 @@ export default function CreateView() {
                                             JSON.stringify(
                                                 {
                                                     dna,
+                                                    decoder: decoder.info.package.reference,
                                                     settings: {
                                                         ...settings,
                                                         musicVersion:

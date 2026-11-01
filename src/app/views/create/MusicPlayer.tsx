@@ -27,7 +27,8 @@ export default function MusicPlayer({ wav, stale, loop }: Props) {
             </Stack>
             {stale && (
                 <Alert severity="warning" sx={{ mb: 1.5 }}>
-                    DNA or sound settings have changed. Generate music again to update the audio.
+                    Decoder, DNA or sound settings have changed. Generate music again to update the
+                    audio.
                 </Alert>
             )}
             {url ? (

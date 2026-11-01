@@ -1,0 +1,21 @@
+[package]
+name = "seedsong-deploy"
+version = "0.1.0"
+edition = "2024"
+description = "Deploy Seedsong decoder artifacts to CKB data Cells"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ckb-sdk = "=5.1.0"
+ckb-types = "1.0"
+ckb-jsonrpc-types = "1.0"
+ckb-hash = "1.0"
+hex = "0.4"
+secp256k1 = { version = "0.30", features = ["recovery"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }

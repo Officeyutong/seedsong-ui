@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
     Box,
@@ -11,8 +11,12 @@ import {
 } from "@mui/material";
 import { AutoAwesomeOutlined, HelpOutlineRounded } from "@mui/icons-material";
 import { makeTheme } from "./theme";
-import { loadPatterns } from "./common/patterns";
-import { patternUrl } from "./common/specifications";
+import { setPatterns } from "./common/patterns";
+import DecoderPanel from "./decoder/DecoderPanel";
+import { DecoderEngine, closeSession, session } from "./decoder/engine";
+import type { DecoderSession } from "./decoder/engine";
+import { normalizeSettings, readSettings } from "./decoder/types";
+import type { DecoderSettings } from "./decoder/types";
 import BusyButton from "./common/BusyButton";
 import Header from "./views/Header";
 import CreateView from "./views/create/CreateView";
@@ -23,43 +27,84 @@ export default function App() {
         () => window.matchMedia("(prefers-color-scheme: dark)").matches,
     );
     const [tab, setTab] = useState(0);
-    const [patternState, setPatternState] = useState<"loading" | "ready" | "error">("loading");
-    const [patternError, setPatternError] = useState("");
+    const [initial] = useState(readSettings);
+    const [decoder, setDecoder] = useState<DecoderSession | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [progress, setProgress] = useState("Loading decoder…");
+    const [loadError, setLoadError] = useState("");
+    const active = useRef<DecoderSession | null>(null);
+    const pending = useRef<DecoderEngine | null>(null);
+    const sequence = useRef(0);
     const theme = useMemo(() => makeTheme(dark ? "dark" : "light"), [dark]);
-    const retryPatterns = useCallback(async () => {
-        setPatternState("loading");
-        setPatternError("");
+    const load = useCallback(async (input: DecoderSettings) => {
+        const id = ++sequence.current;
+        pending.current?.dispose();
+        setLoading(true);
+        setLoadError("");
+        setProgress("Loading decoder…");
+        let engine: DecoderEngine | null = null;
         try {
-            await loadPatterns(patternUrl);
-            setPatternState("ready");
+            const settings = normalizeSettings(input);
+            engine = new DecoderEngine(settings, (message) => {
+                if (sequence.current === id) setProgress(message);
+            });
+            pending.current = engine;
+            const info = await engine.initialize();
+            if (sequence.current !== id) {
+                engine.dispose();
+                return;
+            }
+            const next = session(engine, info);
+            setPatterns(info.patterns);
+            const previous = active.current;
+            active.current = next;
+            pending.current = null;
+            setDecoder(next);
+            if (previous) closeSession(previous);
+            try {
+                localStorage.setItem("seedsong.decoder", JSON.stringify(settings));
+            } catch {
+                /* Storage is optional. */
+            }
         } catch (error) {
-            setPatternError(
-                error instanceof Error ? error.message : "Could not load the artwork patterns.",
-            );
-            setPatternState("error");
+            engine?.dispose();
+            if (sequence.current === id && (error as Error).name !== "AbortError")
+                setLoadError(
+                    error instanceof Error ? error.message : "Could not load the decoder.",
+                );
+        } finally {
+            if (sequence.current === id) {
+                pending.current = null;
+                setLoading(false);
+            }
+        }
+    }, []);
+    const cancelLoading = useCallback(() => {
+        sequence.current++;
+        pending.current?.dispose();
+        pending.current = null;
+        setLoading(false);
+        setProgress("");
+    }, []);
+    const disposeResources = useCallback(() => {
+        sequence.current++;
+        pending.current?.dispose();
+        pending.current = null;
+        if (active.current) {
+            closeSession(active.current);
+            active.current = null;
         }
     }, []);
     useEffect(() => {
-        let active = true;
-        loadPatterns(patternUrl).then(
-            () => {
-                if (active) setPatternState("ready");
-            },
-            (error: unknown) => {
-                if (active) {
-                    setPatternError(
-                        error instanceof Error
-                            ? error.message
-                            : "Could not load the artwork patterns.",
-                    );
-                    setPatternState("error");
-                }
-            },
-        );
+        let mounted = true;
+        void Promise.resolve().then(() => {
+            if (mounted) return load(initial);
+        });
         return () => {
-            active = false;
+            mounted = false;
+            disposeResources();
         };
-    }, []);
+    }, [initial, load, disposeResources]);
 
     return (
         <ThemeProvider theme={theme}>
@@ -89,6 +134,17 @@ export default function App() {
                     </Tabs>
                 </Container>
             </Box>
+            <Container maxWidth="xl">
+                <DecoderPanel
+                    initial={initial}
+                    active={decoder}
+                    loading={loading}
+                    progress={progress}
+                    error={loadError}
+                    onLoad={load}
+                    onCancel={cancelLoading}
+                />
+            </Container>
             <Box component="main">
                 <Box
                     role="tabpanel"
@@ -96,28 +152,28 @@ export default function App() {
                     aria-labelledby="tab-create"
                     hidden={tab !== 0}
                 >
-                    {patternState === "ready" ? (
-                        <CreateView />
+                    {decoder !== null ? (
+                        <CreateView decoder={decoder} />
                     ) : (
                         <Container maxWidth="sm" sx={{ py: 8, textAlign: "center" }}>
-                            {patternError && (
+                            {loadError && (
                                 <Alert severity="error" sx={{ mb: 2 }}>
-                                    {patternError}
+                                    {loadError}
                                 </Alert>
                             )}
                             <BusyButton
                                 variant="outlined"
-                                busy={patternState === "loading"}
-                                busyLabel="Loading artwork patterns…"
-                                onClick={retryPatterns}
+                                busy={loading}
+                                busyLabel={progress || "Loading decoder…"}
+                                onClick={() => void load(initial)}
                             >
-                                Retry loading patterns
+                                Retry loading decoder
                             </BusyButton>
                         </Container>
                     )}
                 </Box>
                 <Box role="tabpanel" id="panel-help" aria-labelledby="tab-help" hidden={tab !== 1}>
-                    {tab === 1 && <HelpView />}
+                    {tab === 1 && decoder && <HelpView decoder={decoder} />}
                 </Box>
             </Box>
             <Container maxWidth="xl">
@@ -141,7 +197,7 @@ export default function App() {
                         color="text.secondary"
                         sx={{ fontFamily: "var(--mono)" }}
                     >
-                        MUSIC / 1 &nbsp;·&nbsp; PATTERN / 1
+                        MUSIC / 2 &nbsp;·&nbsp; PATTERN / 1
                     </Typography>
                 </Box>
             </Container>

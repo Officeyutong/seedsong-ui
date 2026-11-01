@@ -1,6 +1,6 @@
 import type { Dob0Pattern, Dob1Pattern, TraitValue } from "./types";
 
-interface Patterns {
+export interface Patterns {
     dob0Pattern: Dob0Pattern;
     dob1Pattern: Dob1Pattern;
 }
@@ -126,4 +126,9 @@ export function loadPatterns(url: string): Promise<void> {
             });
     }
     return loading;
+}
+
+/** Atomically install patterns from the newly initialized source. */
+export function setPatterns(next: Patterns): void {
+    patterns = next;
 }

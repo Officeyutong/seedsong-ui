@@ -1,79 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { RenderOptions, RenderedWav } from "seedsong-js";
-import type { MusicRequest, MusicResponse } from "../workers/types";
-type Pending = { resolve: (value: string | RenderedWav) => void; reject: (error: Error) => void };
-export function useMusicRenderer() {
-    const workerRef = useRef<Worker | null>(null);
-    const sequence = useRef(0);
-    const pending = useRef(new Map<number, Pending>());
-    const [engine, setEngine] = useState<"idle" | "loading" | "ready" | "error">("idle");
-    const dispose = useCallback((error: Error) => {
-        workerRef.current?.terminate();
-        workerRef.current = null;
-        pending.current.forEach((request) => request.reject(error));
-        pending.current.clear();
-    }, []);
-    useEffect(
-        () => () => dispose(new DOMException("The page was closed", "AbortError")),
-        [dispose],
-    );
-    const request = useCallback(
-        (
-            command: { type: "random" } | { type: "render"; options: RenderOptions },
-        ): Promise<string | RenderedWav> => {
-            if (!workerRef.current) {
-                setEngine("loading");
-                const worker = new Worker(new URL("../workers/music.worker.ts", import.meta.url), {
-                    type: "module",
-                });
-                workerRef.current = worker;
-                worker.onmessage = (event: MessageEvent<MusicResponse>) => {
-                    const response = event.data;
-                    if (response.type === "ready") {
-                        setEngine("ready");
-                        return;
-                    }
-                    const task = pending.current.get(response.id);
-                    if (!task) return;
-                    pending.current.delete(response.id);
-                    if (response.type === "success") task.resolve(response.value);
-                    else task.reject(new Error(response.message));
-                };
-                const fail = () => {
-                    setEngine("error");
-                    dispose(new Error("The music engine could not load. Please try again."));
-                };
-                worker.onerror = fail;
-                worker.onmessageerror = fail;
-            }
-            const id = ++sequence.current;
-            return new Promise((resolve, reject) => {
-                pending.current.set(id, { resolve, reject });
-                try {
-                    workerRef.current!.postMessage({ ...command, id } satisfies MusicRequest);
-                } catch (error) {
-                    pending.current.delete(id);
-                    reject(error);
-                }
-            });
-        },
-        [dispose],
-    );
+import { useCallback, useState } from "react";
+import type { RenderOptions } from "seedsong-js";
+import type { DecoderSession } from "../decoder/engine";
+export function useMusicRenderer(decoder: DecoderSession) {
+    const [epoch, setEpoch] = useState(0);
+    const [engine, setEngine] = useState<"idle" | "loading" | "ready" | "error">("ready");
+    const ready = useCallback(async () => {
+        if (!decoder.engine.ready) setEngine("loading");
+        try {
+            await decoder.engine.initialize();
+            setEngine("ready");
+        } catch (error) {
+            setEngine((error as Error).name === "AbortError" ? "idle" : "error");
+            throw error;
+        }
+    }, [decoder]);
     const cancel = useCallback(() => {
-        dispose(new DOMException("Rendering was cancelled", "AbortError"));
+        decoder.engine.cancel();
         setEngine("idle");
-    }, [dispose]);
+        setEpoch((v) => v + 1);
+    }, [decoder]);
     return {
         engine,
+        epoch,
         cancel,
-        randomDna: useCallback(
-            async () => (await request({ type: "random" })) as string,
-            [request],
-        ),
+        randomDna: useCallback(async () => {
+            await ready();
+            return decoder.engine.randomDna();
+        }, [decoder, ready]),
         renderWav: useCallback(
-            async (options: RenderOptions) =>
-                (await request({ type: "render", options })) as RenderedWav,
-            [request],
+            async (options: RenderOptions) => {
+                await ready();
+                return decoder.engine.renderWav(options);
+            },
+            [decoder, ready],
+        ),
+        cover: useCallback(
+            async (dna: string) => {
+                await ready();
+                return decoder.engine.cover(dna);
+            },
+            [decoder, ready],
         ),
     };
 }

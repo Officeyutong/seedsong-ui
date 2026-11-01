@@ -1,7 +1,7 @@
 import { Box, Container, Link, Paper, Stack, Typography } from "@mui/material";
-import { musicSpecUrl, patternUrl } from "../../common/specifications";
+import type { DecoderSession } from "../../decoder/engine";
 
-export default function HelpView() {
+export default function HelpView({ decoder }: { decoder: DecoderSession }) {
     return (
         <Container maxWidth="md" sx={{ py: 5 }}>
             <Typography variant="h4" gutterBottom sx={{ fontWeight: 650 }}>
@@ -22,11 +22,15 @@ export default function HelpView() {
                     ],
                     [
                         "03 · Generate music",
-                        "Select Generate music to create a 16-bar stereo WAV. The first render loads the music engine. Rendering runs in a Worker, so you can keep editing or cancel at any time.",
+                        "Select Generate music to create a 16-bar stereo WAV. The selected decoder runs in a Worker, so you can keep editing or cancel at any time.",
                     ],
                     [
                         "04 · Save your creation",
                         "Download the SVG, WAV, and DNA text file. The text file also records your music version and sound settings. Select that version in Sound settings and restore the saved settings to recreate the piece. Floating-point audio samples may vary across platforms.",
+                    ],
+                    [
+                        "Choose a decoder",
+                        "Use Decoder source to keep the bundled engine or load a ZIP Cell through a CKB RPC endpoint. Load selected source applies the decoder, artwork patterns, and documents together. Cancel or a failed load keeps the current source. This RPC mode is separate from future light-client verification.",
                     ],
                     [
                         "Randomization and seeds",
@@ -43,19 +47,29 @@ export default function HelpView() {
                     </Paper>
                 ))}
                 <Box sx={{ pt: 2 }}>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                        Documents:{" "}
+                        {decoder.info.package.source === "bundled"
+                            ? "bundled with this website"
+                            : "extracted from the selected on-chain ZIP"}
+                        .
+                    </Typography>
                     <Typography variant="body2">
                         Default protocols: seedsong-music/2 · seedsong-pattern/1. Legacy music v1 is
                         available in Sound settings.
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                         The artwork patterns are read at runtime from the specification included
-                        with the pinned music library.
+                        with the active decoder source.
                     </Typography>
                     <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
-                        <Link href={musicSpecUrl} target="_blank" rel="noreferrer">
+                        <Link href={decoder.documentUrls.music} target="_blank" rel="noreferrer">
                             Music specification
                         </Link>
-                        <Link href={patternUrl} target="_blank" rel="noreferrer">
+                        <Link href={decoder.documentUrls.legacy} target="_blank" rel="noreferrer">
+                            Legacy music specification
+                        </Link>
+                        <Link href={decoder.documentUrls.pattern} target="_blank" rel="noreferrer">
                             DOB patterns
                         </Link>
                     </Stack>

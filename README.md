@@ -39,7 +39,8 @@ Browser tests open a visible browser. Install the browser once with `npx playwri
 - Generate random DNA using the music library.
 - Edit DNA through five stages, preserving unrelated bytes and bitfields.
 - Preview SVG artwork and musical traits from the pinned DOB/0 and DOB/1 patterns.
-- Render WAV in a Worker, with cancellation, loading states, and stale-result detection.
+- Choose the bundled decoder or a ZIP Cell loaded through a configurable CCC RPC client.
+- Render covers and WAV in a Worker, with cancellation, loading states, and stale-result detection.
 - Play, seek, change volume, loop, and download audio.
 - Select music v2 (default) or legacy v1 for reproducible playback and comparison.
 - Download the exact SVG string and a DNA text file containing the music version and render settings.
@@ -53,18 +54,19 @@ The initial DNA is the specification's reference example. Audio rendering starts
 
 `vendor/seedsong-base` is a Git submodule. Commit its Git link to pin the music code and specifications together. To upgrade, check out the intended upstream commit in that directory, run `npm run setup`, review the runtime patterns and regression tests, and commit the updated Git link. The submodule Git link pins the library and both specifications together.
 
-The application fetches the pinned `pattern.md` at runtime and parses its DOB/0 and DOB/1 JSON arrays. Vite serves the document as a local asset, so production uses the same document without a remote API. Loading and retry controls include a button Loader. There is no synchronization script or generated pattern source. `spec.md` defines the music byte allocation. Musical decoding remains in the upstream Rust library; the UI only decodes the traits and edits DNA fields.
+With the bundled source, the application fetches the pinned `pattern.md` at runtime and parses its DOB/0 and DOB/1 JSON arrays. Vite serves the document as a local asset, so production uses the same document without a remote API. Loading and retry controls include a button Loader. There is no synchronization script or generated pattern source. `spec.md` defines the music byte allocation. The active Rust/WASM library generates SVG covers and music in a Worker. The UI also reads the active patterns to edit DNA fields and show immediate trait previews.
 
 ## Source layout
 
 - `src/app/views`: header, creation workflow, and help page.
 - `src/app/common`: runtime pattern loading, DNA editing, DOB decoding, downloads, and shared types.
-- `src/app/hooks`: Worker lifecycle and Blob URL cleanup.
+- `src/app/decoder`: source settings, CCC archive loading, integrity checks, Worker ownership and document URLs.
+- `src/app/hooks`: rendering callbacks and Blob URL cleanup.
 - `src/app/workers`: typed audio rendering protocol and Worker entry.
 - `scripts`: Git submodule and music library setup.
 - `test`: protocol and visible-browser integration tests.
 
-The application is a static site. Production output in `dist/` includes the JS/WASM engine and Worker; the deployed host needs no Rust toolchain or audio backend. This release provides local creation; wallet integration and on-chain minting are outside its current scope.
+The application is a static site. On-chain decoder loading uses CCC JSON-RPC requests to the selected endpoint; the bundled source requires only the site's static assets. Production output in `dist/` includes the JS/WASM engine and Worker; the deployed host needs no Rust toolchain or audio backend. This release provides local creation; wallet integration and on-chain minting are outside its current scope.
 
 ## Automated build and publication
 
@@ -75,3 +77,44 @@ The workflow checks out the pinned submodules, installs Linux build dependencies
 After a successful build, the workflow publishes the contents of `dist/` at the root of `deploy`, including the Worker and specification assets. `deploy` is reserved for build output: files absent from the new build are removed, and existing publication history is preserved. The branch is created on the first publication if it does not already exist. Failed builds do not publish, and newer runs cancel older runs.
 
 Publication uses [actions-gh-pages](https://github.com/peaceiris/actions-gh-pages) with the built-in `GITHUB_TOKEN` and job-level `contents: write` permission. No additional token secret is required. Repository rules for `deploy` must permit the workflow's publication commits. This workflow updates the artifact branch; it does not configure a hosting provider or run the test suites.
+
+
+## On-chain artifact deployment
+
+[tools/seedsong-deploy](tools/seedsong-deploy/README.md) is an independent native Rust program using the CKB Rust SDK. It always compresses the raw WASM decoder, matching JS loader, build metadata, specifications and an archive manifest into one `bundle.zip`, stored in a single data Cell. Compression is mandatory. The local receipt records its OutPoint and both archive and entry hashes; readers must unzip the Cell data before loading WASM. It signs through an existing ckb-cli account without exporting private keys.
+
+From this repository root, after pinning and building a seedsong-base revision that includes the decoder artifacts:
+
+```bash
+# Offline plan: inspect file hashes and exact occupied capacity.
+cargo run --locked --manifest-path tools/seedsong-deploy/Cargo.toml -- \
+  plan --from "$SEEDSONG_ADDRESS"
+
+# Explicitly sign and broadcast on testnet.
+cargo run --locked --manifest-path tools/seedsong-deploy/Cargo.toml -- \
+  deploy --from "$SEEDSONG_ADDRESS" --rpc http://127.0.0.1:8114 \
+  --output deployments/testnet-decoder.json
+```
+
+Set `SEEDSONG_ADDRESS` to the public testnet address of your funded ckb-cli account. Deployment needs node RPC and a synced indexer; a separate endpoint can be supplied with `--indexer-url`. The tool defaults to testnet and verifies the node genesis hash. The `verify` command checks commitment, file hashes and Cell liveness against a saved receipt. See the tool README for account configuration, additional file uploads and recovery after interrupted submissions. This tool does not create Clusters or mint Spore records.
+
+
+## Decoder sources and CCC RPC
+
+Open **Decoder source** above the creation tabs. The default is **Bundled with this website**, preserving the engine and specifications shipped with the pinned seedsong-base package. The bundled WASM is loaded lazily as a Worker chunk when that source initializes.
+
+Choose **Load from a CKB Cell** to configure:
+
+- RPC endpoint: defaults to `https://testnet.ckb.dev/`. CCC's `ClientPublicTestnet.open({ urls: [rpcUrl] })` uses exactly this endpoint, without falling back to another provider. HTTP and HTTPS URLs are supported; custom endpoints must permit browser CORS access. HTTPS pages normally cannot use plain HTTP endpoints other than browser-permitted local exceptions.
+- Decoder transaction hash: defaults to `0x4d54a43844847bd053b8cedf6bf70deb5cdb5904a43378f6db7c4426887a22ba`.
+- Output index: defaults to `0`. A `hash:index` value in the hash field also works and overrides the separate index.
+
+**Load selected source** applies changes explicitly. The successful selection is saved in localStorage and restored on reload. Download, ZIP decompression, hashing, JS/WASM initialization, cover generation, and WAV rendering run in Workers. Loading buttons display progress and can be cancelled. A failed or cancelled replacement keeps the previously active decoder and its documents. There is no silent fallback from a failed on-chain source to the bundled engine. If a saved endpoint becomes unavailable, select the bundled source to recover.
+
+The loader checks the transaction hash and commitment, Cell liveness, archive schema/ABI, every file's SHA-256 and CKB data hash, and the WASM build manifest before importing downloaded JS. It accepts `seedsong-archive/1` ZIPs with decoder ABI 1 and the Seedsong v1 pattern format understood by the editor. ZIP input is limited to 8 MiB, with at most 64 entries and 16 MiB of expanded content. The ZIP must include `bundle.json`, `decoder.wasm`, `loader.js`, `decoder.json`, `pattern.md`, `spec.md`, and `spec-v1.md`.
+
+The matching JS loader is imported from the archive, so a custom transaction can carry its own wasm-bindgen glue. It is not required to match the locally bundled WASM. The documents linked in **Guide** are Blob URLs made from the active source's actual texts. Switching sources updates the editor patterns and links together, and marks previously rendered audio stale until regenerated. DNA exports include decoder provenance (RPC, OutPoint and archive/WASM hashes for the chain source).
+
+A cancelled audio render terminates the Worker. The already checked package is retained in memory and used to restart the Worker without repeating the RPC download. Source changes dispose the previous Worker and document URLs. Browser policies must allow Worker modules, `blob:` module imports and WASM compilation. No cross-origin isolation is needed.
+
+This integration uses `@ckb-ccc/core` as an RPC client and `fflate` to read standard ZIPs. It does not connect a wallet or implement light-client verification. RPC requests contain the selected transaction/Cell references, not the edited DNA. The source's archive hash is displayed for identification; the chosen RPC still supplies chain status and headers.

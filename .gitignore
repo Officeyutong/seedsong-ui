@@ -27,3 +27,6 @@ dist-ssr
 package-lock.json
 test-results/
 playwright-report/
+
+# Native CKB deployment tool build output.
+/tools/seedsong-deploy/target/

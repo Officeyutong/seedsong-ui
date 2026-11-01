@@ -25,6 +25,7 @@ export interface RenderSettings {
     loop: boolean;
 }
 export interface RenderSnapshot {
+    decoderId: string;
     dna: string;
     settings: RenderSettings;
 }
