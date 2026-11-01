@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
     Box,
     Container,
     CssBaseline,
+    CircularProgress,
     Tab,
     Tabs,
     ThemeProvider,
     Typography,
 } from "@mui/material";
-import { AutoAwesomeOutlined, HelpOutlineRounded } from "@mui/icons-material";
+import { AutoAwesomeOutlined, HelpOutlineRounded, AlbumOutlined } from "@mui/icons-material";
 import { makeTheme } from "./theme";
 import { setPatterns } from "./common/patterns";
 import DecoderPanel from "./decoder/DecoderPanel";
@@ -21,12 +22,17 @@ import BusyButton from "./common/BusyButton";
 import Header from "./views/Header";
 import CreateView from "./views/create/CreateView";
 import HelpView from "./views/help/HelpView";
+import { REFERENCE_DNA } from "./common/dna";
+const MintView = lazy(() => import("./mint/MintView"));
 
 export default function App() {
     const [dark, setDark] = useState(
         () => window.matchMedia("(prefers-color-scheme: dark)").matches,
     );
     const [tab, setTab] = useState(0);
+    const [mintOpened, setMintOpened] = useState(false);
+    const [mintDna, setMintDna] = useState(REFERENCE_DNA);
+    const [mintBusy, setMintBusy] = useState(false);
     const [initial] = useState(readSettings);
     const [decoder, setDecoder] = useState<DecoderSession | null>(null);
     const [loading, setLoading] = useState(true);
@@ -114,7 +120,10 @@ export default function App() {
                 <Container maxWidth="xl">
                     <Tabs
                         value={tab}
-                        onChange={(_, value: number) => setTab(value)}
+                        onChange={(_, value: number) => {
+                            setTab(value);
+                            if (value === 2) setMintOpened(true);
+                        }}
                         aria-label="Main navigation"
                     >
                         <Tab
@@ -131,10 +140,17 @@ export default function App() {
                             iconPosition="start"
                             label="Guide"
                         />
+                        <Tab
+                            id="tab-mint"
+                            aria-controls="panel-mint"
+                            icon={<AlbumOutlined sx={{ fontSize: 18 }} />}
+                            iconPosition="start"
+                            label="Mint"
+                        />
                     </Tabs>
                 </Container>
             </Box>
-            <Container maxWidth="xl">
+            <Container maxWidth="xl" inert={mintBusy}>
                 <DecoderPanel
                     initial={initial}
                     active={decoder}
@@ -153,7 +169,17 @@ export default function App() {
                     hidden={tab !== 0}
                 >
                     {decoder !== null ? (
-                        <CreateView decoder={decoder} />
+                        <CreateView
+                            decoder={decoder}
+                            mintBusy={mintBusy}
+                            onMint={(dna) => {
+                                if (!mintBusy) {
+                                    setMintDna(dna);
+                                    setMintOpened(true);
+                                    setTab(2);
+                                }
+                            }}
+                        />
                     ) : (
                         <Container maxWidth="sm" sx={{ py: 8, textAlign: "center" }}>
                             {loadError && (
@@ -174,6 +200,25 @@ export default function App() {
                 </Box>
                 <Box role="tabpanel" id="panel-help" aria-labelledby="tab-help" hidden={tab !== 1}>
                     {tab === 1 && decoder && <HelpView decoder={decoder} />}
+                </Box>
+                <Box role="tabpanel" id="panel-mint" aria-labelledby="tab-mint" hidden={tab !== 2}>
+                    {mintOpened && (
+                        <Suspense
+                            fallback={
+                                <Box sx={{ p: 6, textAlign: "center" }}>
+                                    <CircularProgress aria-label="Loading mint interface" />
+                                </Box>
+                            }
+                        >
+                            <MintView
+                                dna={mintDna}
+                                onDnaChange={setMintDna}
+                                decoder={decoder}
+                                sourceBusy={loading}
+                                onBusy={setMintBusy}
+                            />
+                        </Suspense>
+                    )}
                 </Box>
             </Box>
             <Container maxWidth="xl">

@@ -44,6 +44,9 @@ Browser tests open a visible browser. Install the browser once with `npx playwri
 - Play, seek, change volume, loop, and download audio.
 - Select music v2 (default) or legacy v1 for reproducible playback and comparison.
 - Download the exact SVG string and a DNA text file containing the music version and render settings.
+- Connect a CCC wallet and mint the current DNA into the deployed testnet Spore Cluster.
+- Generate, edit and mint batches of up to 50 unique DNA values in one atomic transaction.
+- Review capacity and fees, export signed receipts, check confirmation and recover uncertain submissions.
 - Responsive layouts, keyboard-accessible controls, light and dark themes.
 
 DNA exports describe the current DNA and sound settings. After a matching render, their music version comes from the returned WAV metadata. If you edit DNA or settings, the previous audio is marked stale and its WAV download is disabled; the DNA export describes the new settings awaiting rendering. To recreate an export, paste its `dna` and restore its `settings`, including `musicVersion`, in Sound settings.
@@ -61,12 +64,13 @@ With the bundled source, the application fetches the pinned `pattern.md` at runt
 - `src/app/views`: header, creation workflow, and help page.
 - `src/app/common`: runtime pattern loading, DNA editing, DOB decoding, downloads, and shared types.
 - `src/app/decoder`: source settings, CCC archive loading, integrity checks, Worker ownership and document URLs.
+- `src/app/mint`: CCC wallet UI and typed DNA generation, transaction preparation, signing and recovery APIs.
 - `src/app/hooks`: rendering callbacks and Blob URL cleanup.
 - `src/app/workers`: typed audio rendering protocol and Worker entry.
 - `scripts`: Git submodule and music library setup.
 - `test`: protocol and visible-browser integration tests.
 
-The application is a static site. On-chain decoder loading uses CCC JSON-RPC requests to the selected endpoint; the bundled source requires only the site's static assets. Production output in `dist/` includes the JS/WASM engine and Worker; the deployed host needs no Rust toolchain or audio backend. This release provides local creation; wallet integration and on-chain minting are outside its current scope.
+The application is a static site. On-chain decoder loading uses CCC JSON-RPC requests to the selected endpoint; the bundled source requires only the site's static assets. Production output in `dist/` includes the JS/WASM engine and Worker; the deployed host needs no Rust toolchain or audio backend. The Mint tab loads the CCC wallet connector on demand and submits user-approved testnet transactions.
 
 ## Automated build and publication
 
@@ -117,7 +121,7 @@ The matching JS loader is imported from the archive, so a custom transaction can
 
 A cancelled audio render terminates the Worker. The already checked package is retained in memory and used to restart the Worker without repeating the RPC download. Source changes dispose the previous Worker and document URLs. Browser policies must allow Worker modules, `blob:` module imports and WASM compilation. No cross-origin isolation is needed.
 
-This integration uses `@ckb-ccc/core` as an RPC client and `fflate` to read standard ZIPs. It does not connect a wallet or implement light-client verification. RPC requests contain the selected transaction/Cell references, not the edited DNA. The source's archive hash is displayed for identification; the chosen RPC still supplies chain status and headers.
+Decoder loading uses `@ckb-ccc/core` as an RPC client and `fflate` to read standard ZIPs. Wallet minting additionally uses `@ckb-ccc/connector-react` and `@ckb-ccc/spore`. Neither implements light-client verification here. Loading a decoder sends only transaction/Cell references; minting publishes the selected DNA on chain. The source's archive hash is displayed for identification; the chosen RPC still supplies chain status and headers.
 
 
 ### Seedsong Cluster creation
@@ -131,3 +135,56 @@ cargo run --release --locked -- cluster-verify --receipt ./cluster-receipt.json
 ```
 
 The RPC defaults to the public testnet endpoint and the archive defaults to the released ZIP OutPoint. Cluster data uses standard uncompressed Spore Molecule encoding; the ZIP-only rule still applies to the decoder archive. See the [deployment tool documentation](tools/seedsong-deploy/README.md#create-the-seedsong-spore-cluster) for permissions, capacity, CoBuild encoding and recovery after uncertain submissions. These commands do not mint the 50 test records.
+
+
+## Mint records from the browser
+
+Open **Mint**, or choose **Mint this DNA** in Create. Connect a wallet through CCC, choose **Current DNA** or **Batch mint**, then **Prepare records**. Batch mode generates 1–50 unique random DNA values through the active Seedsong Worker; you can edit the list or paste one DNA per line. Preparation does not sign or broadcast. Review the recipient, Spore IDs, occupied record capacity and estimated fee before **Sign and mint**. The complete batch is atomic and needs one transaction approval. Buttons show progress during asynchronous operations.
+
+Minting currently targets this deployed testnet Cluster:
+
+```text
+0xcac704319425b5ba589b62fb4df55307909c77db8a9ee5ead5d3e8bfaaa27abe
+```
+
+The collection requires the wallet to control the Cluster's current lock script. Using the same key with a different lock type does not establish that permission. The wallet must also have sufficient live CKB Cells for the records and fee. A standard owner-lock input/output proof authorizes minting without consuming the Cluster Cell. Minting is not open to arbitrary wallets.
+
+**Minting RPC endpoint** defaults to `https://testnet.ckb.dev/`. **Apply RPC** checks the testnet genesis before replacing the client. It is separate from the decoder-download RPC. Reconnect the wallet if its client has not followed the change. Custom endpoints need browser CORS support. Only the selected RPC is used. Private keys stay in the connected wallet.
+
+Each record is a Spore V2 with `content_type = "dob/1"`, the collection's Cluster ID and UTF-8 JSON content `{"dna":"<64 lowercase hex characters>"}`. The Cluster supplies the DOB patterns and music v2 decoder release; audio files and WASM are not duplicated in each record. Playback overrides, reverb and legacy v1 settings are not part of mint content. The active decoder's WASM hash must match the Cluster release, and chain sources must also match its archive hash. Load the deployed ZIP if the bundled build differs.
+
+The browser saves the full signed transaction before sending it. **Mint receipts** lists transaction hashes, DNA, Spore IDs and statuses. Use **Check transaction status** to refresh confirmation and Explorer links after broadcast. If RPC submission times out, use **Resubmit signed transaction**: it checks the original hash and only resends the saved bytes. It never generates a replacement batch. Export receipts for backup; clearing browser storage removes local recovery data. Storage failure prevents the initial broadcast. Preparation/generation can be cancelled; reject a pending signature in your wallet.
+
+### Batch API
+
+The UI-independent TypeScript API is [src/app/mint/api.ts](src/app/mint/api.ts). It accepts ordinary DNA strings and a CCC `Signer` rather than wallet-specific objects:
+
+```ts
+import {
+    generateBatchDna, prepareMint, signAndSubmitMint,
+    saveMintReceipt, checkMint, resubmitMint,
+} from "./src/app/mint/api";
+
+const dnas = await generateBatchDna(50, {
+    randomDna: () => decoder.engine.randomDna(),
+    signal: abortController.signal,
+    onProgress: console.info,
+});
+const plan = await prepareMint(signer, dnas, decoder.info.package.reference, {
+    feeRate: 1000n, // shannons per 1000 bytes
+    signal: abortController.signal,
+    onProgress: console.info,
+});
+// Show plan.records, recipient, recordCapacity and fee before approval.
+const receipt = await signAndSubmitMint(plan, {
+    persist: saveMintReceipt, // synchronous durable storage; called BEFORE broadcast
+    onProgress: console.info,
+});
+const latest = await checkMint(receipt); // no signing or broadcast
+// Only for an uncertain submission, after explicit user action:
+// await resubmitMint(latest, { persist: saveMintReceipt });
+```
+
+`generateBatchDna` can omit `randomDna` to use browser `crypto.getRandomValues`. It rejects invalid counts, malformed DNA and an excessively repetitive random source. `normalizeDnas` canonicalizes a supplied batch and rejects duplicates. `prepareMint` validates the network, live Cluster, owner permission and decoder provenance, then completes funding and fees. Neither function signs. `signAndSubmitMint` rejects a wallet-modified raw transaction and validates every reviewed DNA, Cluster and Spore ID. Receipts use `seedsong-mint/1`; capacities and fees are decimal shannon strings, and `signedTransaction` is the exact Molecule-serialized signed transaction as hex.
+
+New offline regression cases are in `test/mint.test.ts`; run them with the existing `npm test` command. Wallet/browser and live minting checks require your own funded authorized wallet. No transaction is submitted by the build or test scripts.

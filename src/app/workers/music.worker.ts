@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import type { Seedsong, Dob0Pattern, Dob1Pattern } from "seedsong-js";
+import bundledManifest from "../../../vendor/seedsong-base/wasm/seedsong-js/dist/decoder.json?raw";
 import { fetchDecoder } from "../decoder/archive";
 import type { DecoderPackage, DecoderSettings } from "../decoder/types";
 import type { MusicRequest, MusicResponse } from "./types";
@@ -34,7 +35,7 @@ async function initialize(
         bundle = {
             source: "bundled",
             documents: { pattern, music, legacy },
-            reference: { source: "bundled" },
+            reference: { source: "bundled", wasmHash: JSON.parse(bundledManifest).sha256 },
         };
     }
     // Reject unsupported editor patterns before executing the selected decoder.

@@ -44,7 +44,15 @@ const initialSettings: Settings = {
     reverb: 0.18,
     loop: false,
 };
-export default function CreateView({ decoder }: { decoder: DecoderSession }) {
+export default function CreateView({
+    decoder,
+    onMint,
+    mintBusy,
+}: {
+    decoder: DecoderSession;
+    onMint: (dna: string) => void;
+    mintBusy: boolean;
+}) {
     const [raw, setRaw] = useState(REFERENCE_DNA);
     const [lastValid, setLastValid] = useState(() => parseDna(REFERENCE_DNA));
     const [mode, setMode] = useState<"input" | "wizard">("input");
@@ -418,6 +426,15 @@ export default function CreateView({ decoder }: { decoder: DecoderSession }) {
                         </Box>
                     )}
                     <TraitList traits={traits} />
+                    <BusyButton
+                        fullWidth
+                        variant="outlined"
+                        sx={{ mt: 2 }}
+                        disabled={!!validation || mintBusy}
+                        onClick={() => onMint(dna)}
+                    >
+                        Mint this DNA
+                    </BusyButton>
                     <MusicPlayer
                         wav={result?.wav ?? null}
                         stale={stale}

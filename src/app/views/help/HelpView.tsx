@@ -29,6 +29,10 @@ export default function HelpView({ decoder }: { decoder: DecoderSession }) {
                         "Download the SVG, WAV, and DNA text file. The text file also records your music version and sound settings. Select that version in Sound settings and restore the saved settings to recreate the piece. Floating-point audio samples may vary across platforms.",
                     ],
                     [
+                        "05 · Mint a record",
+                        "Select Mint this DNA, connect an authorized testnet wallet and prepare a transaction. Review capacity, fees and the recipient before signing. Batch mint generates up to 50 unique DNA values and mints them atomically. The current collection requires its Cluster owner’s lock permission. Signed receipts support status checks and resending the same transaction after a network failure.",
+                    ],
+                    [
                         "Choose a decoder",
                         "Use Decoder source to keep the bundled engine or load a ZIP Cell through a CKB RPC endpoint. Load selected source applies the decoder, artwork patterns, and documents together. Cancel or a failed load keeps the current source. This RPC mode is separate from future light-client verification.",
                     ],
