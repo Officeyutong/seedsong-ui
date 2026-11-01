@@ -1,4 +1,5 @@
 mod artifacts;
+mod cluster;
 mod signer;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -50,6 +51,15 @@ enum Action {
     Deploy(Deploy),
     /// Check commitment, live Cells, and every deployed file against its receipt hash.
     Verify(Verify),
+    /// Inspect the Cluster metadata and occupied capacity using the released ZIP.
+    #[command(name = "cluster-plan")]
+    ClusterPlan(cluster::Config),
+    /// Create a testnet Spore Cluster V2, signed by the existing ckb-cli account.
+    #[command(name = "cluster-create")]
+    ClusterCreate(cluster::Create),
+    /// Verify a created Cluster using its saved receipt.
+    #[command(name = "cluster-verify")]
+    ClusterVerify(cluster::Verify),
 }
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Network {
@@ -152,9 +162,12 @@ fn file_arg(s: &str) -> Result<(String, PathBuf), String> {
     Ok((name.into(), path.into()))
 }
 fn owner(bundle: &Bundle) -> Result<(Script, [u8; 20])> {
-    let address = Address::from_str(&bundle.owner).map_err(anyhow::Error::msg)?;
+    owner_lock(&bundle.owner, bundle.network)
+}
+fn owner_lock(value: &str, network: Network) -> Result<(Script, [u8; 20])> {
+    let address = Address::from_str(value).map_err(anyhow::Error::msg)?;
     ensure!(
-        address.network().to_prefix() == bundle.network.sdk().to_prefix(),
+        address.network().to_prefix() == network.sdk().to_prefix(),
         "Address prefix does not match --network"
     );
     let lock = Script::from(&address);
@@ -183,7 +196,7 @@ fn genesis(client: &CkbRpcClient, network: Network) -> Result<BlockView> {
     }
     Ok(block)
 }
-fn save(path: &std::path::Path, receipt: &Receipt, initial: bool) -> Result<()> {
+fn save(path: &std::path::Path, receipt: &impl Serialize, initial: bool) -> Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -455,6 +468,9 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&plan)?);
         }
         Action::Deploy(args) => deploy(args)?,
+        Action::ClusterPlan(args) => cluster::plan(args)?,
+        Action::ClusterCreate(args) => cluster::create(args)?,
+        Action::ClusterVerify(args) => cluster::verify(args)?,
         Action::Verify(args) => {
             let receipt: Receipt = serde_json::from_slice(&fs::read(args.receipt)?)?;
             ensure!(

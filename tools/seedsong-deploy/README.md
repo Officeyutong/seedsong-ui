@@ -1,6 +1,6 @@
 # Seedsong Cell deployment
 
-A standalone native Rust CLI using [CKB Rust SDK 5.1.0](https://github.com/nervosnetwork/ckb-sdk-rust/tree/v5.1.0). It always compresses the decoder and its companion files into one standard ZIP archive and publishes its bytes as a single ordinary data Cell. ZIP compression is mandatory; there is no raw-file deployment mode. It does not create a Spore Cluster, register official decoders, or mint records.
+A standalone native Rust CLI using [CKB Rust SDK 5.1.0](https://github.com/nervosnetwork/ckb-sdk-rust/tree/v5.1.0). It always compresses the decoder and its companion files into one standard ZIP archive and publishes its bytes as a single ordinary data Cell. ZIP compression is mandatory; there is no raw-file deployment mode. It also creates a standard testnet Spore Cluster V2 using the already deployed archive and official DOB decoder references. Minting Spore records is not implemented by this tool yet.
 
 The examples below run from the **seedsong-ui repository root**. You can also run `cargo run --release -- plan --from "$SEEDSONG_ADDRESS"` directly inside `tools/seedsong-deploy`.
 
@@ -127,3 +127,85 @@ cargo clippy --locked --manifest-path tools/seedsong-deploy/Cargo.toml --all-tar
 ```
 
 Unit tests use synthetic keys and local fixtures. They check signature parsing/recovery, capacity calculation, manifest construction, ZIP round-trip and determinism, archive tampering detection, and bundle validation without accessing real accounts or sending transactions. Actual network deployment requires running the explicit deploy command with your funded account.
+
+
+## Create the Seedsong Spore Cluster
+
+These commands support **CKB testnet**. They read the committed, live archive,
+validate all file hashes and the WASM build manifest, and extract the exact
+DOB/0 and DOB/1 arrays from the archived `pattern.md`. Local edits to patterns
+are not used. The live Cluster V2 contract Cell is checked against its official
+code hash before building or signing.
+
+From `tools/seedsong-deploy`, inspect the metadata and occupied capacity:
+
+```bash
+cargo run --release --locked -- cluster-plan --from "$SEEDSONG_ADDRESS"
+```
+
+From the UI root, prefix the command with
+`cargo run --release --locked --manifest-path tools/seedsong-deploy/Cargo.toml --`.
+Both commands default to:
+
+- RPC: `https://testnet.ckb.dev/` (override with `--rpc`).
+- Archive: `0x4d54a43844847bd053b8cedf6bf70deb5cdb5904a43378f6db7c4426887a22ba:0`
+  (override with `--archive TX_HASH:INDEX`).
+- Name: `Seedsong` (override with `--name`).
+- Minting policy: owner authorization through the current Cluster lock; no
+  public mint proxy is created. The metadata records the initial owner lock
+  hash for provenance, not as a replacement for the current on-chain lock.
+
+The plan is read-only and does not access the account key. It displays the
+full JSON description, original archive reference, official Cluster contract,
+and minimum occupied capacity. The Cluster ID is intentionally null: it is
+only determined after selecting the first funding input for the actual creation
+transaction. The default metadata occupies approximately 7,100 CKB; inspect the
+current plan for the exact amount, excluding fees and funding change.
+
+Explicitly create and broadcast:
+
+```bash
+cargo run --release --locked -- cluster-create --from "$SEEDSONG_ADDRESS" \
+  --output ./cluster-receipt.json
+```
+
+Enter the ckb-cli account password locally if prompted. `--indexer-url`,
+`--fee-rate`, `--ckb-cli`, `--ckb-cli-home` and `--wait-secs` have the same meanings
+as for archive deployment. The tool derives the Cluster ID from the first
+input's complete serialized CellInput plus output index 0, encodes
+ClusterDataV2, generates the CreateCluster CoBuild action, and balances fees
+including the final extra witness before signing. It never spends the archive
+Cell. Only ordinary mature empty-data, untyped funding Cells are selected.
+
+The receipt is written before broadcast and records the Cluster ID, type hash,
+OutPoint, complete JSON description, archive reference, occupied capacity,
+actual fee and signed transaction. A failed/uncertain submission leaves the
+prepared receipt in place; check its transaction hash rather than creating a
+second Cluster. Successful creation prints the actual Cluster ID and hash.
+
+Verify it later:
+
+```bash
+cargo run --release --locked -- cluster-verify --receipt ./cluster-receipt.json
+```
+
+This checks the testnet genesis, committed transaction against the receipt,
+Cluster ID derivation, type script/hash, owner, capacity, encoded metadata,
+Cluster liveness and the referenced archive's liveness/data hash.
+
+The standard Cluster description contains exactly two `dob.decoders` entries
+under `dob.ver: 1`: official DOB/0 followed by official DOB/1. Patterns are JSON
+arrays within the JSON description string. The Seedsong extension separately
+references the ZIP OutPoint and data hash, WASM and loader entry names, ABI,
+document entries and music specification. Music WASM is not a third standard
+DOB decoder.
+
+The decoder archive remains a mandatory ZIP data Cell. **The Cluster Cell is
+uncompressed standard Spore Molecule data**, because wallets and official DOB
+services must read its name and JSON description directly. These are different
+protocol objects; the archive uploader's ZIP-only rule has not changed.
+
+This command does not mint the 50 M2 records, prove official SVG output parity,
+or establish wallet/explorer rendering compatibility. Those remain separate
+acceptance steps. The fixture in [fixtures](fixtures/README.md) independently
+checks wire encoding against CCC, not the official SVG renderer.

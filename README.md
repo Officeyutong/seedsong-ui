@@ -96,7 +96,7 @@ cargo run --locked --manifest-path tools/seedsong-deploy/Cargo.toml -- \
   --output deployments/testnet-decoder.json
 ```
 
-Set `SEEDSONG_ADDRESS` to the public testnet address of your funded ckb-cli account. Deployment needs node RPC and a synced indexer; a separate endpoint can be supplied with `--indexer-url`. The tool defaults to testnet and verifies the node genesis hash. The `verify` command checks commitment, file hashes and Cell liveness against a saved receipt. See the tool README for account configuration, additional file uploads and recovery after interrupted submissions. This tool does not create Clusters or mint Spore records.
+Set `SEEDSONG_ADDRESS` to the public testnet address of your funded ckb-cli account. Deployment needs node RPC and a synced indexer; a separate endpoint can be supplied with `--indexer-url`. The tool defaults to testnet and verifies the node genesis hash. The `verify` command checks commitment, file hashes and Cell liveness against a saved receipt. See the tool README for account configuration, additional file uploads and recovery after interrupted submissions. The tool also provides `cluster-plan`, `cluster-create`, and `cluster-verify` for a standard testnet Spore Cluster V2 referencing the released ZIP and official DOB decoders. Cluster creation signs through ckb-cli; minting Spore records remains separate.
 
 
 ## Decoder sources and CCC RPC
@@ -118,3 +118,16 @@ The matching JS loader is imported from the archive, so a custom transaction can
 A cancelled audio render terminates the Worker. The already checked package is retained in memory and used to restart the Worker without repeating the RPC download. Source changes dispose the previous Worker and document URLs. Browser policies must allow Worker modules, `blob:` module imports and WASM compilation. No cross-origin isolation is needed.
 
 This integration uses `@ckb-ccc/core` as an RPC client and `fflate` to read standard ZIPs. It does not connect a wallet or implement light-client verification. RPC requests contain the selected transaction/Cell references, not the edited DNA. The source's archive hash is displayed for identification; the chosen RPC still supplies chain status and headers.
+
+
+### Seedsong Cluster creation
+
+The native deployment tool reads patterns directly from the committed archive and supports owner-authorized minting through the Cluster's standard lock. From `tools/seedsong-deploy`:
+
+```bash
+cargo run --release --locked -- cluster-plan --from "$SEEDSONG_ADDRESS"
+cargo run --release --locked -- cluster-create --from "$SEEDSONG_ADDRESS" --output ./cluster-receipt.json
+cargo run --release --locked -- cluster-verify --receipt ./cluster-receipt.json
+```
+
+The RPC defaults to the public testnet endpoint and the archive defaults to the released ZIP OutPoint. Cluster data uses standard uncompressed Spore Molecule encoding; the ZIP-only rule still applies to the decoder archive. See the [deployment tool documentation](tools/seedsong-deploy/README.md#create-the-seedsong-spore-cluster) for permissions, capacity, CoBuild encoding and recovery after uncertain submissions. These commands do not mint the 50 test records.
