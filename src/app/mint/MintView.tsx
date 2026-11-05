@@ -330,10 +330,10 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                             Cluster: {CLUSTER_ID}
                         </Typography>
                         <Alert severity="info">
-                            Once public minting is enabled on chain, any funded testnet wallet can
-                            mint. You pay the record capacity and network fee; no creator signature
-                            or extra minting fee is required. Records use the Cluster’s music v2
-                            release; playback overrides are not stored.
+                            Public minting is enabled. Connect any funded CKB testnet wallet to mint
+                            your records. You pay the record capacity and network fee; no creator
+                            signature or extra minting fee is required. Records use the Cluster’s
+                            music v2 release; playback overrides are not stored.
                         </Alert>
                     </Stack>
                 </Paper>
