@@ -209,3 +209,75 @@ This command does not mint the 50 M2 records, prove official SVG output parity,
 or establish wallet/explorer rendering compatibility. Those remain separate
 acceptance steps. The fixture in [fixtures](fixtures/README.md) independently
 checks wire encoding against CCC, not the official SVG renderer.
+
+
+## Open the existing Seedsong Cluster to public minting
+
+The `cluster-open-plan`, `cluster-open`, and `cluster-open-verify` commands
+preserve the existing Seedsong Cluster and its records. They change only its
+lock to official testnet Anyone-Can-Pay (ACP), using the original owner's key
+hash with **exactly 20 argument bytes** (no minimum CKB/UDT payment). The migration
+creates reusable, untyped, empty-data Cells at that exact lock. A public mint
+includes one of these Cells as an input and returns its full capacity in an
+identical output. This satisfies Spore's Cluster lock-proxy rule. The Cluster
+itself remains a dependency and is not consumed by each mint.
+
+From this tool directory:
+
+```bash
+cargo run --release --locked -- cluster-open-plan --from "$SEEDSONG_ADDRESS"
+cargo run --release --locked -- cluster-open --from "$SEEDSONG_ADDRESS" \
+  --output ./public-mint-receipt.json
+cargo run --release --locked -- cluster-open-verify --receipt ./public-mint-receipt.json
+```
+
+`cluster-open-plan` is read-only. `cluster-open` signs through ckb-cli, saves the
+full signed transaction before broadcast, and optionally waits for commitment.
+Private keys are not exported. Use the current standard sighash owner of the
+existing Seedsong Cluster. The default original OutPoint is
+`0x23f41fabe26d45ef711ad8a1c2f169635cad16e5963f44df114b02694e1b2602:0`;
+`--cluster TX_HASH:INDEX` selects a newer location if it was transferred before
+opening. Both commands validate the official Cluster V2 type and Seedsong ID.
+Already opened Clusters and existing receipt paths are rejected.
+
+Options include `--rpc`, `--indexer-url`, `--fee-rate`, `--ckb-cli`,
+`--ckb-cli-home`, `--wait-secs`, and `--slots` (1–64). The latter defaults to four
+61-CKB authorization Cells, so setup adds **244 CKB plus the transaction fee**.
+Cluster data, type, capacity and ID remain unchanged; all existing records retain
+their membership and decoder references. No mint fee is introduced. Original
+minting metadata is immutable provenance of the old configuration; the current
+lock determines authorization. The original owner key retains ACP control and
+can withdraw authorization Cells or change the Cluster lock with its signature.
+Public users cannot reduce a slot's capacity, change its lock or remove it.
+
+Different users may race for a slot. The UI checks transaction-pool liveness
+before signing and asks the user to prepare again when a slot is spent. It
+never silently creates a replacement mint. More slots can be funded by sending
+ordinary empty-data, untyped Cells to the exact public lock; no Cluster-owner
+signature is needed to create them. Slots are used as inputs/outputs, not as
+payment, and cannot fund the user's record capacity or network fee.
+
+The public lock is testnet ACP type hash
+`0x3419a1c09eb2567f6552ee7a8ecffd64155cffe0f1796e6e61ec088d740c1356`;
+its official dependency group is
+`0xec26b0f85ed839ece5f11c4c4e837ec359f5adc4420410f6453b1f6b60fb96a6:0`.
+See the [ACP specification](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0026-anyone-can-pay/0026-anyone-can-pay.md)
+and [Spore mint authorization](https://github.com/sporeprotocol/spore-contract/blob/master/contracts/spore/src/entry.rs).
+No new contract is deployed.
+
+The migration uses a `TransferCluster` CoBuild action. A fixture generated with
+CCC's independent `assembleTransferClusterAction` / `injectCobuild` codecs lives
+in `test/fixtures/public-mint.json`, and native unit tests compare its bytes.
+Unit tests also cover preserved Cluster metadata/capacity and exact slot outputs.
+The UI tests cover unrelated wallets, preserved slot capacity, payment-constrained
+ACP rejection and stale authorization before signature. Run the existing test
+commands when validating the change; live migration and wallet minting are
+separate manual checks.
+
+After a timeout, inspect the saved transaction hash and run
+`cluster-open-verify`; do not repeat opening automatically. Verification checks
+commitment, the exact signed transaction, original input, unchanged Cluster
+fields, correct ACP lock and setup outputs. Slots may already have been spent
+and recycled by users; their creation outputs need not remain live. The public
+Cluster output must remain live. Use this verifier for the migrated state: the
+original `cluster-verify` command verifies the original creation state.

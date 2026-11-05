@@ -330,10 +330,10 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                             Cluster: {CLUSTER_ID}
                         </Typography>
                         <Alert severity="info">
-                            This collection requires authorization from its current Cluster owner.
-                            Connect a wallet controlling that lock. Records use the Cluster’s music
-                            v2 release; playback timbre, reverb and legacy preview settings are not
-                            stored.
+                            Once public minting is enabled on chain, any funded testnet wallet can
+                            mint. You pay the record capacity and network fee; no creator signature
+                            or extra minting fee is required. Records use the Cluster’s music v2
+                            release; playback overrides are not stored.
                         </Alert>
                     </Stack>
                 </Paper>
@@ -507,6 +507,15 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                     <Paper variant="outlined" sx={{ p: 3 }}>
                         <Stack spacing={2}>
                             <Typography variant="h6">Review before signing</Typography>
+                            <Chip
+                                label={
+                                    plan.publicProof
+                                        ? "Public mint · Any wallet"
+                                        : "Owner-authorized mint"
+                                }
+                                color="primary"
+                                variant="outlined"
+                            />
                             <Typography>
                                 {plan.records.length} records · {amount(plan.recordCapacity)} CKB
                                 locked in records · {amount(plan.fee)} CKB fee
@@ -515,11 +524,12 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                                 Recipient: {plan.recipient}
                             </Typography>
                             <Typography variant="caption" sx={{ overflowWrap: "anywhere" }}>
-                                Cluster owner: {plan.clusterOwner}
+                                Collection authorization address: {plan.clusterOwner}
                             </Typography>
                             <Typography variant="body2" color="text.secondary">
-                                All records are minted atomically in one transaction. Other outputs
-                                return funding or preserve the Cluster lock proof.
+                                All records are minted atomically in one transaction. The public
+                                authorization Cell is returned with its full capacity. If another
+                                mint uses it first, prepare a fresh transaction.
                             </Typography>
                             <Records records={plan.records} />
                             <BusyButton

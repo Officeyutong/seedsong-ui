@@ -4,6 +4,14 @@ import { sporeA } from "@ckb-ccc/spore/advanced";
 import { formatDna, parseDna } from "../common/dna";
 import type { DecoderReference } from "../decoder/types";
 
+import {
+    addPublicMintProof,
+    findPublicMintCell,
+    isPublicMintLock,
+    verifyPublicMintProof,
+} from "./publicMint";
+import type { PublicMintProof } from "./publicMint";
+
 export const CLUSTER_ID = "0xcac704319425b5ba589b62fb4df55307909c77db8a9ee5ead5d3e8bfaaa27abe";
 export const CLUSTER_TYPE_HASH =
     "0x519d48285f2694edd2045317ccf3251fa3f2e4a00355de83db5e70ad889b93b3";
@@ -39,6 +47,7 @@ export interface MintPlan {
     recipient: string;
     clusterOwner: string;
     ownerLock: ccc.Script;
+    publicProof?: PublicMintProof;
     recordCapacity: bigint;
     fee: bigint;
     feeRate: bigint;
@@ -87,7 +96,7 @@ export async function requireTestnet(client: ccc.Client) {
 async function requireOwner(signer: ccc.Signer, lock: ccc.Script) {
     if (!(await signer.getAddressObjs()).some((address) => address.script.eq(lock))) {
         throw new Error(
-            `This Cluster requires owner authorization. Connect a wallet controlling ${ccc.Address.fromScript(lock, signer.client)}.`,
+            `Public minting has not been enabled on chain yet. The collection administrator must run cluster-open first. Owner wallet: ${ccc.Address.fromScript(lock, signer.client)}.`,
         );
     }
 }
@@ -115,7 +124,8 @@ export async function prepareMint(
     const live = await client.getCellLive(cluster.cell.outPoint, true, false);
     if (!live) throw new Error("The Cluster Cell is no longer live. Prepare again.");
     const clusterOwner = live.cellOutput.lock;
-    await requireOwner(signer, clusterOwner);
+    const publicMint = isPublicMintLock(clusterOwner);
+    if (!publicMint) await requireOwner(signer, clusterOwner);
     const metadata = JSON.parse(sporeA.unpackToRawClusterData(live.outputData).description);
     const released = metadata?.seedsong?.music?.decoder;
     if (
@@ -131,14 +141,31 @@ export async function prepareMint(
     const content = (dna: string) => new TextEncoder().encode(JSON.stringify({ dna }));
     const base = ccc.Transaction.from({});
     await base.completeInputsAtLeastOne(signer);
-    if ((await base.findInputIndexByLock(clusterOwner, client)) === undefined) {
-        await base.completeInputsAddOne(new ccc.SignerCkbScriptReadonly(client, clusterOwner));
+    let publicProof: PublicMintProof | undefined;
+    if (publicMint) {
+        if (
+            recipient.script.eq(clusterOwner) ||
+            (await base.findInputIndexByLock(clusterOwner, client)) !== undefined
+        ) {
+            throw new Error(
+                "Use an ordinary funded wallet address, separate from the collection's authorization address.",
+            );
+        }
+        progress("Finding a public mint authorization Cell…");
+        const permit = await findPublicMintCell(client, clusterOwner, options.signal);
+        publicProof = addPublicMintProof(base, permit, clusterOwner);
+        const acp = await client.getKnownScript(ccc.KnownScript.AnyoneCanPay);
+        if (acp.codeHash !== clusterOwner.codeHash || acp.hashType !== clusterOwner.hashType)
+            throw new Error("RPC ACP deployment mismatch.");
+        await base.addCellDepInfos(client, acp.cellDeps);
+    } else {
+        if ((await base.findInputIndexByLock(clusterOwner, client)) === undefined) {
+            await base.completeInputsAddOne(new ccc.SignerCkbScriptReadonly(client, clusterOwner));
+        }
+        if ((await base.findInputIndexByLock(clusterOwner, client)) === undefined)
+            throw new Error("No funding Cell can prove Cluster-owner authorization.");
+        if (!recipient.script.eq(clusterOwner)) base.addOutput({ lock: clusterOwner }, "0x");
     }
-    if ((await base.findInputIndexByLock(clusterOwner, client)) === undefined)
-        throw new Error("No funding Cell can prove Cluster-owner authorization.");
-    // Compare scripts by value. A record locked to the owner is already the
-    // required lock-proxy output; do not return an entire funding Cell as proof.
-    if (!recipient.script.eq(clusterOwner)) base.addOutput({ lock: clusterOwner }, "0x");
     base.addCellDeps({ outPoint: live.outPoint, depType: "code" });
     let { tx, id } = await spore.createSpore({
         signer,
@@ -178,6 +205,14 @@ export async function prepareMint(
     await tx.completeFeeBy(signer, feeRate);
     cancelled(options.signal);
     verifyRecords(tx, records);
+    if (publicProof) {
+        verifyPublicMintProof(tx, publicProof, clusterOwner);
+        const inputs = await Promise.all(tx.inputs.map((input) => input.getCell(client)));
+        if (inputs.filter((cell) => cell.cellOutput.lock.eq(clusterOwner)).length !== 1)
+            throw new Error(
+                "Wallet funding overlaps the public authorization address. Fund a separate ordinary wallet address.",
+            );
+    }
     const fee = await tx.getFee(client);
     if (fee < 0n) throw new Error("The mint transaction is not balanced.");
     return {
@@ -189,6 +224,7 @@ export async function prepareMint(
         recipient: recipient.toString(),
         clusterOwner: ccc.Address.fromScript(clusterOwner, client).toString(),
         ownerLock: clusterOwner,
+        publicProof,
         recordCapacity: records.reduce(
             (sum, record) => sum + tx.outputs[record.outputIndex].capacity,
             0n,
@@ -241,7 +277,22 @@ export async function signAndSubmitMint(plan: MintPlan, options: Submission): Pr
     if (plan.tx.hash() !== plan.txHash || options.isCurrent?.() === false)
         throw new Error("The wallet or mint preview changed. Prepare again.");
     await requireTestnet(plan.client);
-    await requireOwner(plan.signer, plan.ownerLock);
+    if (plan.publicProof) {
+        verifyPublicMintProof(plan.tx, plan.publicProof, plan.ownerLock);
+        const live = await plan.client.getCellLive(plan.publicProof.cell.outPoint, true, true);
+        if (
+            !live ||
+            !live.cellOutput.eq(plan.publicProof.cell.cellOutput) ||
+            live.outputData !== "0x"
+        )
+            throw new Error(
+                "Another mint used this authorization Cell. Prepare a fresh transaction; nothing was broadcast.",
+            );
+    } else {
+        if (isPublicMintLock(plan.ownerLock))
+            throw new Error("Missing public mint authorization proof.");
+        await requireOwner(plan.signer, plan.ownerLock);
+    }
     if ((await plan.signer.getRecommendedAddress()) !== plan.recipient)
         throw new Error("Wallet account changed. Prepare again.");
     options.onProgress?.("Waiting for wallet approval…");
@@ -251,6 +302,7 @@ export async function signAndSubmitMint(plan: MintPlan, options: Submission): Pr
             "The wallet changed the reviewed transaction. Nothing was broadcast; prepare a new preview.",
         );
     verifyRecords(signed, plan.records);
+    if (plan.publicProof) verifyPublicMintProof(signed, plan.publicProof, plan.ownerLock);
     const receipt: MintReceipt = {
         schema: "seedsong-mint/1",
         createdAt: new Date().toISOString(),

@@ -176,3 +176,61 @@ test("wallet changes to a reviewed raw transaction never reach broadcast", async
     );
     assert.deepEqual(events, []);
 });
+
+// Public minting must work with a non-owner signer, preserve its entire shared
+// authorization Cell and fail before asking for a signature if it was spent.
+test("public mint proof returns all shared capacity and rejects payment-constrained or changed proofs", async () => {
+    const {
+        addPublicMintProof,
+        isPublicMintLock,
+        verifyPublicMintProof,
+        PUBLIC_MINT_ACP_CODE_HASH,
+    } = await import("../src/app/mint/publicMint");
+    const acp = ccc.Script.from({
+        codeHash: PUBLIC_MINT_ACP_CODE_HASH,
+        hashType: "type",
+        args: lock.args,
+    });
+    assert.equal(isPublicMintLock(acp), true);
+    assert.equal(isPublicMintLock(ccc.Script.from({ ...acp, args: `${acp.args}08` })), false);
+    assert.equal(isPublicMintLock(lock), false);
+    const cell = ccc.Cell.from({
+        outPoint: { txHash: `0x${"44".repeat(32)}`, index: 0 },
+        cellOutput: { lock: acp, capacity: 6100000000n },
+        outputData: "0x",
+    });
+    const { tx } = transaction(1);
+    const proof = addPublicMintProof(tx, cell, acp);
+    verifyPublicMintProof(tx, proof, acp);
+    assert.equal(tx.outputs[proof.outputIndex].capacity, cell.cellOutput.capacity);
+    assert.throws(() => addPublicMintProof(tx, cell, acp), /already a funding input/);
+    tx.outputs[proof.outputIndex].capacity -= 1n;
+    assert.throws(() => verifyPublicMintProof(tx, proof, acp), /authorization Cell/);
+});
+
+test("a non-owner wallet signs a public mint; stale authorization never requests a signature", async () => {
+    const { addPublicMintProof, PUBLIC_MINT_ACP_CODE_HASH } =
+        await import("../src/app/mint/publicMint");
+    const fixture = submissionFixture();
+    const acp = ccc.Script.from({
+        codeHash: PUBLIC_MINT_ACP_CODE_HASH,
+        hashType: "type",
+        args: `0x${"55".repeat(20)}`,
+    });
+    const cell = ccc.Cell.from({
+        outPoint: { txHash: `0x${"66".repeat(32)}`, index: 0 },
+        cellOutput: { lock: acp, capacity: 6100000000n },
+        outputData: "0x",
+    });
+    fixture.plan.ownerLock = acp;
+    fixture.plan.publicProof = addPublicMintProof(fixture.plan.tx, cell, acp);
+    fixture.plan.txHash = fixture.plan.tx.hash();
+    fixture.plan.client.getCellLive = async () => cell;
+    // The mock wallet controls only `lock`, which deliberately differs from ACP.
+    const receipt = await signAndSubmitMint(fixture.plan, { persist: () => {} });
+    assert.equal(receipt.status, "submitted");
+    fixture.events.length = 0;
+    fixture.plan.client.getCellLive = async () => undefined;
+    await assert.rejects(signAndSubmitMint(fixture.plan, { persist: () => {} }), /Another mint/);
+    assert.deepEqual(fixture.events, []);
+});

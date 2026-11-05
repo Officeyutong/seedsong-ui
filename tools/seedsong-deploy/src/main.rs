@@ -60,6 +60,15 @@ enum Action {
     /// Verify a created Cluster using its saved receipt.
     #[command(name = "cluster-verify")]
     ClusterVerify(cluster::Verify),
+    /// Inspect migration to public minting; preserves the existing Cluster and records.
+    #[command(name = "cluster-open-plan")]
+    ClusterOpenPlan(cluster::public_mint::Config),
+    /// Enable public minting on the existing Cluster; sign once through ckb-cli.
+    #[command(name = "cluster-open")]
+    ClusterOpen(cluster::public_mint::Open),
+    /// Verify the saved public mint migration transaction and current Cluster lock.
+    #[command(name = "cluster-open-verify")]
+    ClusterOpenVerify(cluster::public_mint::Verify),
 }
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Network {
@@ -471,6 +480,9 @@ fn main() -> Result<()> {
         Action::ClusterPlan(args) => cluster::plan(args)?,
         Action::ClusterCreate(args) => cluster::create(args)?,
         Action::ClusterVerify(args) => cluster::verify(args)?,
+        Action::ClusterOpenPlan(args) => cluster::public_mint::plan(args)?,
+        Action::ClusterOpen(args) => cluster::public_mint::open(args)?,
+        Action::ClusterOpenVerify(args) => cluster::public_mint::verify(args)?,
         Action::Verify(args) => {
             let receipt: Receipt = serde_json::from_slice(&fs::read(args.receipt)?)?;
             ensure!(

@@ -787,3 +787,6 @@ mod tests {
         assert!(parse_out_point("bad").is_err());
     }
 }
+
+#[path = "public_mint.rs"]
+pub mod public_mint;

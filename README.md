@@ -147,7 +147,9 @@ Minting currently targets this deployed testnet Cluster:
 0xcac704319425b5ba589b62fb4df55307909c77db8a9ee5ead5d3e8bfaaa27abe
 ```
 
-The collection requires the wallet to control the Cluster's current lock script. Using the same key with a different lock type does not establish that permission. The wallet must also have sufficient live CKB Cells for the records and fee. A standard owner-lock input/output proof authorizes minting without consuming the Cluster Cell. Minting is not open to arbitrary wallets.
+The existing Cluster can be opened to every funded testnet wallet using the migration below. The UI inspects its current on-chain lock: before migration, only the owner can mint; after migration, it uses the official Anyone-Can-Pay (ACP) lock and a reusable public authorization Cell. No creator co-signature, signing backend or additional minting fee is required. The wallet funds its own records and network fee. The public Cell's lock, data and full capacity are returned unchanged, and the Cluster is referenced as a dependency without being spent. Single and batch minting share this permission path.
+
+Public authorization Cells can be used by one transaction at a time. If another mint consumes the selected Cell before signing, prepare a fresh transaction. A conflict after signing may be rejected by the node: check the saved transaction's status before preparing another mint. There is no automatic replacement or duplicate batch submission.
 
 **Minting RPC endpoint** defaults to `https://testnet.ckb.dev/`. **Apply RPC** checks the testnet genesis before replacing the client. It is separate from the decoder-download RPC. Reconnect the wallet if its client has not followed the change. Custom endpoints need browser CORS support. Only the selected RPC is used. Private keys stay in the connected wallet.
 
@@ -188,3 +190,57 @@ const latest = await checkMint(receipt); // no signing or broadcast
 `generateBatchDna` can omit `randomDna` to use browser `crypto.getRandomValues`. It rejects invalid counts, malformed DNA and an excessively repetitive random source. `normalizeDnas` canonicalizes a supplied batch and rejects duplicates. `prepareMint` validates the network, live Cluster, owner permission and decoder provenance, then completes funding and fees. Neither function signs. `signAndSubmitMint` rejects a wallet-modified raw transaction and validates every reviewed DNA, Cluster and Spore ID. Receipts use `seedsong-mint/1`; capacities and fees are decimal shannon strings, and `signedTransaction` is the exact Molecule-serialized signed transaction as hex.
 
 New offline regression cases are in `test/mint.test.ts`; run them with the existing `npm test` command. Wallet/browser and live minting checks require your own funded authorized wallet. No transaction is submitted by the build or test scripts.
+
+
+### Enable public minting for the existing collection
+
+This is a one-time **on-chain migration** signed by the current Cluster owner.
+Deploying the website alone cannot change the Spore contract's authorization.
+It preserves the Cluster ID, type, immutable metadata, decoder references,
+capacity and membership of the existing 50 records. The lock changes to the
+official testnet ACP lock using the same owner's 20-byte public-key hash, with
+no minimum-payment arguments. The original key retains control/withdrawal rights;
+ordinary users can only recycle authorization Cells without withdrawing funds.
+
+From the UI repository root, use the existing ckb-cli account:
+
+```bash
+# Read-only plan; no signing or transaction submission.
+cargo run --release --locked --manifest-path tools/seedsong-deploy/Cargo.toml -- \
+  cluster-open-plan --from "$SEEDSONG_ADDRESS"
+
+# Sign, save the transaction receipt, broadcast and verify confirmation.
+cargo run --release --locked --manifest-path tools/seedsong-deploy/Cargo.toml -- \
+  cluster-open --from "$SEEDSONG_ADDRESS" \
+  --output deployments/testnet-public-mint.json
+
+cargo run --release --locked --manifest-path tools/seedsong-deploy/Cargo.toml -- \
+  cluster-open-verify --receipt deployments/testnet-public-mint.json
+```
+
+The default source is the original Seedsong Cluster creation output. Supply
+`--cluster TX_HASH:INDEX` if it moved before this migration. The command refuses
+an unrelated Cluster, a non-owner account, a spent source, an already opened
+Cluster, or overwriting an existing receipt. It is testnet-only.
+
+The default `--slots 4` creates four untyped, empty-data authorization Cells of
+61 CKB each, requiring **244 additional CKB plus the migration fee** from the
+administrator. This is reusable setup capacity, not a per-mint charge. Slots may
+be chosen from 1–64. Any user can fund additional untyped, empty-data Cells at
+the exact public lock to increase availability; existing slots are recycled by
+mints. Custom RPC/indexer and ckb-cli paths are supported as in Cluster creation.
+
+Deploy the updated website and run the migration, then connect an unrelated
+funded wallet and prepare a mint. Its preview shows **Public mint · Any wallet**.
+Check both single and batch minting and confirm the record recipient is the
+connected wallet. The signed Cluster creation description's owner-only fields
+record the original configuration; current mint permission follows the live
+lock, which this UI inspects. Record the migration transaction alongside the
+Cluster creation receipt. `cluster-open-verify` verifies the new state; the old
+creation verifier expects the original Cell to remain live.
+
+If submission times out, use the saved receipt's hash and
+`cluster-open-verify` before taking another action. The receipt contains the
+exact signed transaction for recovery. An RPC timeout is not proof of rejection.
+See the native tool README for command details. No migration is executed by the
+website build, tests or setup script.
