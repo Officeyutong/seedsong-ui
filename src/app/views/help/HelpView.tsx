@@ -30,11 +30,15 @@ export default function HelpView({ decoder }: { decoder: DecoderSession }) {
                     ],
                     [
                         "05 · Mint a record",
-                        "Select Mint this DNA, connect an authorized testnet wallet and prepare a transaction. Review capacity, fees and the recipient before signing. Batch mint generates up to 50 unique DNA values and mints them atomically. The current collection requires its Cluster owner’s lock permission. Signed receipts support status checks and resending the same transaction after a network failure.",
+                        "Select Mint this DNA, connect a funded testnet wallet and prepare a transaction. Review capacity, fees and the recipient before signing. Batch mint generates up to 50 unique DNA values and mints them atomically. Public minting does not require a creator signature. Signed receipts support status checks and resending the same transaction after a network failure.",
+                    ],
+                    [
+                        "06 · Browse your collection",
+                        "Open Gallery with the same wallet to load your Seedsong records from the light client. Wait for wallet synchronization, select a cover, and generate its music to play or download. Refresh after a mint confirms. Gallery reads chain Cells rather than saved mint receipts. Load the collection's released decoder ZIP in Settings if the bundled decoder does not match.",
                     ],
                     [
                         "Choose a decoder",
-                        "Use Decoder source to keep the bundled engine or load a ZIP Cell through a CKB RPC endpoint. Load selected source applies the decoder, artwork patterns, and documents together. Cancel or a failed load keeps the current source. This RPC mode is separate from future light-client verification.",
+                        "Open Settings → Decoder source to keep the bundled engine or fetch a ZIP Cell through the browser’s light client. It connects to WSS peers, verifies transaction proofs and synchronizes subscribed scripts. Loading applies the decoder, patterns and documents together. Cancel or a failed load keeps the current source.",
                     ],
                     [
                         "Randomization and seeds",

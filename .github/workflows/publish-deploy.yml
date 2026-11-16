@@ -56,6 +56,8 @@ jobs:
         run: |
           npm run build
           test -s dist/index.html
+          test -s dist/_headers
+          cmp public/_headers dist/_headers
 
       - name: Publish build output to deploy
         uses: peaceiris/actions-gh-pages@v4

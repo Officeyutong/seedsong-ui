@@ -1,0 +1,54 @@
+{
+  "schema": "seedsong-m3-evidence/1",
+  "checkedAt": "2026-11-15T13:32:53.495Z",
+  "overall": "incomplete",
+  "diagnosticSource": {
+    "transport": "public JSON-RPC, read-only diagnostic outside the browser application",
+    "url": "https://testnet.ckb.dev",
+    "note": "This check does not establish browser P2P transport or absence of API requests."
+  },
+  "transaction": {
+    "hash": "0xdedf5a49e058b8825ddb638aecbdb87a03afb04b4515d3dfde7483e0651374c4",
+    "status": "committed",
+    "blockHash": "0xd0ae4f3e85b2bbce6f7b37a224a5ebdd7c5d2d6dd14bedb9975d799a042e9564",
+    "blockNumber": "23072993"
+  },
+  "decoder": {
+    "outPoint": "0x4d54a43844847bd053b8cedf6bf70deb5cdb5904a43378f6db7c4426887a22ba:0",
+    "archiveBytes": 159758,
+    "archiveHash": "0x8fe339ca81b742c4ffaa37a982be0f004fd0092a1c768df7614f82af1f041f97",
+    "wasmSha256": "69df207a3e6ebfc5bf98f46ef26aabe3ebf2266bd9d212ea8eb374f79a8706c0"
+  },
+  "records": [
+    {
+      "outputIndex": 1,
+      "sporeId": "0xcf2aacb81ebbab7112316a2c485e6bb33abbcf1ee502dd629e5f60d914fb5cd0",
+      "clusterId": "0xcac704319425b5ba589b62fb4df55307909c77db8a9ee5ead5d3e8bfaaa27abe",
+      "dna": "5fd7b23f4e2b571e8a556be689153374f3cdecf64cf551ded800f165dfcd934f",
+      "capacityShannons": "26500000000",
+      "svg": {
+        "bytes": 797,
+        "sha256": "c9c29b2561a9f1eaf9bde8fd11a64e7e9c915b1d02a61c9e072b4af410f8d3c7"
+      },
+      "wav": {
+        "sampleRate": 22050,
+        "channels": 2,
+        "durationSeconds": 35.29823129251701,
+        "bytes": 3113348,
+        "sha256": "d5b7c316f08497c1dd7056ee12f5d8965828f4b42d439cb19f23885c9f17a59a",
+        "nonzeroPcmSamples": 1548085
+      }
+    }
+  ],
+  "checks": {
+    "chainConfirmation": "passed",
+    "sporeContentAndCluster": "passed",
+    "archiveIntegrity": "passed",
+    "chainDecoderSvgRendering": "passed",
+    "chainDecoderWavRendering": "passed",
+    "browserPlayback": "not_verified",
+    "browserNoExternalApis": "not_verified",
+    "walletSigningAndP2pBroadcast": "user_reported_not_independently_observed",
+    "gallery": "implemented_not_browser_verified"
+  }
+}

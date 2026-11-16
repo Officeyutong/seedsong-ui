@@ -250,8 +250,9 @@ lock determines authorization. The original owner key retains ACP control and
 can withdraw authorization Cells or change the Cluster lock with its signature.
 Public users cannot reduce a slot's capacity, change its lock or remove it.
 
-Different users may race for a slot. The UI checks transaction-pool liveness
-before signing and asks the user to prepare again when a slot is spent. It
+Different users may race for a slot. The UI checks synchronized light-client state and locally submitted inputs
+before signing, and asks the user to prepare again when a slot is spent. It does
+not have a complete view of other peers’ mempools. It
 never silently creates a replacement mint. More slots can be funded by sending
 ordinary empty-data, untyped Cells to the exact public lock; no Cluster-owner
 signature is needed to create them. Slots are used as inputs/outputs, not as

@@ -1,18 +1,19 @@
+import { logInfo, logWarn, logError } from "../diagnostics/logs";
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
 import { ccc } from "@ckb-ccc/connector-react";
 import {
     Alert,
     Box,
     Button,
     Chip,
-    CircularProgress,
     Container,
     Divider,
     Link,
     MenuItem,
     Paper,
     Stack,
+    Snackbar,
+    AlertTitle,
     Table,
     TableBody,
     TableCell,
@@ -23,11 +24,11 @@ import {
     ToggleButton,
     ToggleButtonGroup,
     Typography,
-    useTheme,
 } from "@mui/material";
 import BusyButton from "../common/BusyButton";
 import { download, nextPaint } from "../common/download";
-import { DEFAULT_SETTINGS } from "../decoder/types";
+import { abortable } from "../chain/runtime";
+import { getChainClient } from "../chain/client";
 import type { DecoderSession } from "../decoder/engine";
 import {
     CLUSTER_ID,
@@ -38,12 +39,20 @@ import {
     normalizeDnas,
     prepareMint,
     readMintHistory,
-    requireTestnet,
     resubmitMint,
     saveMintReceipt,
     signAndSubmitMint,
 } from "./api";
 import type { MintPlan, MintReceipt } from "./api";
+import ErrorNotice from "../common/ErrorNotice";
+import { errorMessage, isAbortError } from "../common/errors";
+import MintOperationStatus from "./MintOperationStatus";
+interface StatusCheckResult {
+    severity: "success" | "info" | "error";
+    title: string;
+    message: string;
+    checkedAt: string;
+}
 interface Props {
     dna: string;
     onDnaChange: (dna: string) => void;
@@ -51,43 +60,8 @@ interface Props {
     sourceBusy: boolean;
     onBusy: (busy: boolean) => void;
 }
-function openClient() {
-    return ccc.ClientPublicTestnet.open({ urls: [DEFAULT_SETTINGS.rpcUrl], timeout: 30_000 });
-}
 export default function MintView(props: Props) {
-    const [owner, setOwner] = useState<ReturnType<typeof openClient> | null>(null);
-    const theme = useTheme();
-    useEffect(() => {
-        const resource = openClient();
-        let active = true;
-        void Promise.resolve().then(() => {
-            if (active) setOwner(resource);
-        });
-        return () => {
-            active = false;
-            void resource.dispose();
-        };
-    }, []);
-    return owner ? (
-        <ccc.Provider
-            name="Seedsong"
-            defaultClient={owner.value}
-            clientOptions={[{ name: "CKB Testnet", client: owner.value }]}
-            connectorProps={{
-                style: {
-                    zIndex: 1500,
-                    color: theme.palette.text.primary,
-                    "--background": theme.palette.background.paper,
-                } as CSSProperties,
-            }}
-        >
-            <MintStudio {...props} />
-        </ccc.Provider>
-    ) : (
-        <Box sx={{ p: 6, textAlign: "center" }}>
-            <CircularProgress aria-label="Loading wallet connector" />
-        </Box>
-    );
+    return <MintStudio {...props} />;
 }
 function amount(value: bigint | string) {
     return ccc.fixedPointToString(BigInt(value));
@@ -135,16 +109,21 @@ function Records({ records }: { records: { dna: string; sporeId: string }[] }) {
     );
 }
 function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
-    const { open, close, disconnect, client, signerInfo, wallet, isOpen, setClient } = ccc.useCcc();
+    const { open, close, disconnect, client, signerInfo, wallet, isOpen } = ccc.useCcc();
     const signer = signerInfo?.signer;
     const [mode, setMode] = useState<"single" | "batch">("single");
     const [count, setCount] = useState(50);
     const [batch, setBatch] = useState("");
     const [feeRate, setFeeRate] = useState("1000");
-    const [rpc, setRpc] = useState(client.url);
     const [phase, setPhase] = useState("");
     const [progress, setProgress] = useState("");
     const [error, setError] = useState("");
+    const [checkResults, setCheckResults] = useState<Record<string, StatusCheckResult>>({});
+    const [checkNotice, setCheckNotice] = useState<StatusCheckResult | null>(null);
+    const showCheckResult = (hash: string, result: StatusCheckResult) => {
+        setCheckResults((previous) => ({ ...previous, [hash]: result }));
+        setCheckNotice(result);
+    };
     const [preview, setPreview] = useState<{ key: string; plan: MintPlan } | null>(null);
     const [journal, setJournal] = useState(() => {
         try {
@@ -210,15 +189,24 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
         inflight.current = true;
         onBusy(true);
         setPhase(name);
+        logInfo("Mint", `Operation started: ${name}.`);
         setProgress("");
         setError("");
         const abort = new AbortController();
         controller.current = abort;
         try {
-            await task(abort.signal);
+            await abortable(task(abort.signal), abort.signal);
+            logInfo("Mint", `Operation completed: ${name}.`);
         } catch (error) {
-            if ((error as Error).name !== "AbortError")
-                setError(error instanceof Error ? error.message : "Mint operation failed.");
+            if (isAbortError(error))
+                logWarn(
+                    "Mint",
+                    `Operation cancelled: ${name}. Background chain synchronization may continue.`,
+                );
+            else {
+                logError("Mint", `${name}: ${errorMessage(error)}`);
+                setError(errorMessage(error));
+            }
         } finally {
             controller.current = null;
             inflight.current = false;
@@ -227,7 +215,9 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
             onBusy(false);
         }
     }
-    const update = (receipt: MintReceipt) =>
+    const update = (receipt: MintReceipt) => {
+        if (receipt.status === "rejected")
+            setPreview((previous) => (previous?.plan.txHash === receipt.txHash ? null : previous));
         setJournal((previous) => ({
             ...previous,
             entries: [
@@ -235,6 +225,7 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                 ...previous.entries.filter((entry) => entry.txHash !== receipt.txHash),
             ],
         }));
+    };
     const submitOptions = { persist: saveMintReceipt, onUpdate: update, onProgress: setProgress };
     const exportJson = (value: unknown, name: string) =>
         run(`export-${name}`, async () => {
@@ -243,6 +234,20 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
         });
     return (
         <Container maxWidth="lg" sx={{ py: 4 }}>
+            <Snackbar
+                open={checkNotice !== null}
+                autoHideDuration={8000}
+                anchorOrigin={{ vertical: "top", horizontal: "center" }}
+                onClose={() => setCheckNotice(null)}
+            >
+                <Alert
+                    severity={checkNotice?.severity ?? "info"}
+                    onClose={() => setCheckNotice(null)}
+                    variant="filled"
+                >
+                    {checkNotice?.title}: {checkNotice?.message}
+                </Alert>
+            </Snackbar>
             <Stack spacing={3}>
                 <Box>
                     <Typography variant="h4">Mint your records</Typography>
@@ -261,7 +266,7 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                             <Chip label="CKB Testnet" color="primary" variant="outlined" />
                             <BusyButton
                                 variant="contained"
-                                disabled={busy}
+                                disabled={busy || client !== getChainClient()}
                                 busy={isOpen}
                                 busyLabel="Choose a wallet…"
                                 onClick={() => open()}
@@ -291,41 +296,10 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                                     : "Reading wallet address…"}
                             </Typography>
                         )}
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <TextField
-                                fullWidth
-                                label="Minting RPC endpoint"
-                                value={rpc}
-                                disabled={busy}
-                                onChange={(e) => setRpc(e.target.value)}
-                                helperText={`Active RPC: ${client.url}`}
-                            />
-                            <BusyButton
-                                busy={phase === "rpc"}
-                                disabled={busy || isOpen}
-                                onClick={() =>
-                                    void run("rpc", async () => {
-                                        const url = new URL(rpc.trim());
-                                        if (!["http:", "https:"].includes(url.protocol))
-                                            throw new Error("Use an HTTP or HTTPS RPC URL.");
-                                        const resource = ccc.ClientPublicTestnet.open({
-                                            urls: [url.href],
-                                            timeout: 30_000,
-                                        });
-                                        try {
-                                            await requireTestnet(resource.value);
-                                            setClient(resource);
-                                            setPreview(null);
-                                        } catch (error) {
-                                            await resource.dispose();
-                                            throw error;
-                                        }
-                                    })
-                                }
-                            >
-                                Apply RPC
-                            </BusyButton>
-                        </Stack>
+                        <Typography variant="body2" color="text.secondary">
+                            Funding, authorization Cells and broadcasting use the browser’s light
+                            client. Check synchronization in Settings before minting.
+                        </Typography>
                         <Typography variant="caption" sx={{ overflowWrap: "anywhere" }}>
                             Cluster: {CLUSTER_ID}
                         </Typography>
@@ -424,6 +398,12 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                                 </MenuItem>
                             ))}
                         </TextField>
+                        {busy && (
+                            <MintOperationStatus
+                                key={phase}
+                                step={progress || `Running ${phase}…`}
+                            />
+                        )}
                         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
                             <BusyButton
                                 variant="contained"
@@ -442,7 +422,7 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                                         if (!signer || !decoder) return;
                                         if (signer.client !== client)
                                             throw new Error(
-                                                "Reconnect your wallet to the selected RPC before preparing.",
+                                                "Reconnect your wallet to the light-client network before preparing.",
                                             );
                                         const result = await prepareMint(
                                             signer,
@@ -476,9 +456,6 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                             >
                                 Export DNA list
                             </BusyButton>
-                            {(phase === "generate" || phase === "prepare") && (
-                                <Button onClick={() => controller.current?.abort()}>Cancel</Button>
-                            )}
                         </Stack>
                         {!decoder && (
                             <Alert severity="info">
@@ -491,9 +468,11 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                             </Typography>
                         )}
                         {error && (
-                            <Alert severity="error" onClose={() => setError("")}>
-                                {error}
-                            </Alert>
+                            <ErrorNotice
+                                error={error}
+                                context="Mint operation could not be completed"
+                                onClose={() => setError("")}
+                            />
                         )}
                         {journal.error && (
                             <Alert severity="error">
@@ -597,7 +576,13 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                                 <Chip
                                     label={receipt.status}
-                                    color={receipt.status === "committed" ? "success" : "default"}
+                                    color={
+                                        receipt.status === "committed"
+                                            ? "success"
+                                            : receipt.status === "rejected"
+                                              ? "error"
+                                              : "default"
+                                    }
                                 />
                                 <Typography variant="body2">
                                     {receipt.records.length} records
@@ -612,14 +597,30 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                                 {receipt.txHash}
                             </Link>
                             <Typography variant="caption" sx={{ overflowWrap: "anywhere" }}>
-                                RPC: {receipt.rpcUrl}
+                                Transport: CKB testnet light-client P2P
                             </Typography>
+                            {checkResults[receipt.txHash] && (
+                                <Alert severity={checkResults[receipt.txHash].severity}>
+                                    <AlertTitle>{checkResults[receipt.txHash].title}</AlertTitle>
+                                    {checkResults[receipt.txHash].message}
+                                    <Typography variant="caption" component="div" sx={{ mt: 1 }}>
+                                        Checked at:{" "}
+                                        <time dateTime={checkResults[receipt.txHash].checkedAt}>
+                                            {new Date(
+                                                checkResults[receipt.txHash].checkedAt,
+                                            ).toLocaleString("en-US")}
+                                        </time>
+                                    </Typography>
+                                </Alert>
+                            )}
                             {receipt.message && (
                                 <Alert severity={receipt.status === "rejected" ? "error" : "info"}>
                                     {receipt.message}
                                 </Alert>
                             )}
-                            {(receipt.status === "signed" || receipt.status === "unknown") && (
+                            {["signed", "queued", "submitted", "unknown"].includes(
+                                receipt.status,
+                            ) && (
                                 <Typography variant="body2">
                                     Check status before retrying. Recovery resends the exact signed
                                     transaction and cannot create another batch.
@@ -641,15 +642,53 @@ function MintStudio({ dna, onDnaChange, decoder, sourceBusy, onBusy }: Props) {
                                     disabled={busy}
                                     onClick={() =>
                                         void run(`check-${receipt.txHash}`, async () => {
-                                            const next = await checkMint(receipt);
-                                            saveMintReceipt(next);
+                                            setProgress(
+                                                "Checking the transaction status through the light client…",
+                                            );
+                                            let next: MintReceipt;
+                                            try {
+                                                next = await checkMint(receipt);
+                                            } catch (error) {
+                                                showCheckResult(receipt.txHash, {
+                                                    severity: "error",
+                                                    title: "Status check failed",
+                                                    message: errorMessage(error),
+                                                    checkedAt: new Date().toISOString(),
+                                                });
+                                                throw error;
+                                            }
                                             update(next);
+                                            showCheckResult(receipt.txHash, {
+                                                severity:
+                                                    next.status === "committed"
+                                                        ? "success"
+                                                        : next.status === "rejected"
+                                                          ? "error"
+                                                          : "info",
+                                                title:
+                                                    next.status === "committed"
+                                                        ? "Transaction confirmed"
+                                                        : next.status === "rejected"
+                                                          ? "Transaction cannot be accepted"
+                                                          : next.status === "queued"
+                                                            ? "Queued locally"
+                                                            : "Status not yet verified",
+                                                message:
+                                                    next.status === "committed"
+                                                        ? "The transaction is confirmed on CKB testnet."
+                                                        : (next.message ??
+                                                          "A verified transaction proof is not available yet. Check again later."),
+                                                checkedAt: new Date().toISOString(),
+                                            });
+                                            saveMintReceipt(next);
                                         })
                                     }
                                 >
                                     Check transaction status
                                 </BusyButton>
-                                {(receipt.status === "signed" || receipt.status === "unknown") && (
+                                {["signed", "queued", "submitted", "unknown"].includes(
+                                    receipt.status,
+                                ) && (
                                     <BusyButton
                                         busy={phase === `resubmit-${receipt.txHash}`}
                                         disabled={busy}

@@ -1,6 +1,6 @@
 import { ccc } from "@ckb-ccc/core";
 import { unzipSync, strFromU8 } from "fflate";
-import type { DecoderPackage, DecoderSettings } from "./types";
+import type { DecoderPackage } from "./types";
 const MAX_ZIP = 8 * 1024 * 1024;
 const MAX_EXPANDED = 16 * 1024 * 1024;
 export async function sha256(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
@@ -76,43 +76,4 @@ export async function unpackDecoder(bytes: Uint8Array<ArrayBuffer>): Promise<Dec
         },
         reference: { source: "chain", archiveHash: ccc.hashCkb(bytes), wasmHash: build.sha256 },
     };
-}
-export async function fetchDecoder(
-    settings: DecoderSettings,
-    progress: (message: string) => void,
-): Promise<DecoderPackage> {
-    // Only the selected endpoint is used: no public fallback for a custom RPC.
-    const owner = ccc.ClientPublicTestnet.open({ urls: [settings.rpcUrl], timeout: 30_000 });
-    try {
-        const client = owner.value;
-        progress("Fetching the decoder transaction…");
-        const transaction = await client.getTransaction(settings.txHash);
-        if (!transaction) throw new Error("Decoder transaction was not found on this RPC.");
-        if (transaction.status !== "committed")
-            throw new Error(
-                `Decoder transaction is ${transaction.status}; wait until it is committed.`,
-            );
-        if (transaction.transaction.hash() !== settings.txHash)
-            throw new Error("RPC returned a transaction with a different hash.");
-        const data = transaction.transaction.outputsData[settings.index];
-        if (data === undefined) throw new Error("The transaction has no output at this index.");
-        const [live, genesis] = await Promise.all([
-            client.getCellLive({ txHash: settings.txHash, index: settings.index }, false),
-            client.getHeaderByNumber(0),
-        ]);
-        if (!live) throw new Error("The decoder Cell is spent or unavailable.");
-        if (!genesis) throw new Error("Could not read the network genesis header.");
-        progress("Unpacking and checking decoder files…");
-        const bundle = await unpackDecoder(Uint8Array.from(ccc.bytesFrom(data)));
-        bundle.reference = {
-            ...bundle.reference,
-            rpcUrl: settings.rpcUrl,
-            txHash: settings.txHash,
-            index: settings.index,
-            genesisHash: genesis.hash,
-        };
-        return bundle;
-    } finally {
-        await owner.dispose();
-    }
 }

@@ -29,7 +29,7 @@ async function fixture() {
     );
     return files;
 }
-test("source settings normalize a hash:index without hiding invalid endpoints", () => {
+test("source settings normalize hash:index and reject invalid output references", () => {
     const value = normalizeSettings({
         ...DEFAULT_SETTINGS,
         source: "chain",
@@ -37,13 +37,7 @@ test("source settings normalize a hash:index without hiding invalid endpoints", 
     });
     assert.equal(value.index, 2);
     assert.equal(value.txHash, DEFAULT_SETTINGS.txHash);
-    for (const change of [
-        { rpcUrl: "invalid" },
-        { rpcUrl: "file:///tmp/decoder" },
-        { txHash: "0x123" },
-        { index: -1 },
-        { index: 0.5 },
-    ]) {
+    for (const change of [{ txHash: "0x123" }, { index: -1 }, { index: 0.5 }]) {
         assert.throws(() => normalizeSettings({ ...DEFAULT_SETTINGS, source: "chain", ...change }));
     }
 });
@@ -66,4 +60,13 @@ test("tampered or undeclared archive content is rejected before loading JS", asy
     const paths = await fixture();
     paths["../outside"] = strToU8("invalid path");
     await assert.rejects(unpackDecoder(zipSync(paths)), /invalid or duplicate/);
+});
+
+test("legacy endpoint settings are discarded instead of becoming an RPC fallback", () => {
+    const legacy = {
+        ...DEFAULT_SETTINGS,
+        source: "chain" as const,
+        rpcUrl: "https://legacy.example.invalid/",
+    };
+    assert.equal(Object.hasOwn(normalizeSettings(legacy), "rpcUrl"), false);
 });

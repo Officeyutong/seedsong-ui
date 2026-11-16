@@ -1,6 +1,7 @@
+import { logInfo, logWarn } from "../diagnostics/logs";
 import { ccc } from "@ckb-ccc/core";
-import { spore } from "@ckb-ccc/spore";
-import { sporeA } from "@ckb-ccc/spore/advanced";
+import * as spore from "@ckb-ccc/spore";
+import * as sporeA from "@ckb-ccc/spore/advanced";
 import { formatDna, parseDna } from "../common/dna";
 import type { DecoderReference } from "../decoder/types";
 
@@ -12,22 +13,27 @@ import {
 } from "./publicMint";
 import type { PublicMintProof } from "./publicMint";
 
+import { getChainClient, type LightClientCkb } from "../chain/client";
+import { addFundingInput, sameOutput, transactionFromBytes } from "../chain/codec";
+import { completeMintFee } from "./fee";
+
 export const CLUSTER_ID = "0xcac704319425b5ba589b62fb4df55307909c77db8a9ee5ead5d3e8bfaaa27abe";
 export const CLUSTER_TYPE_HASH =
     "0x519d48285f2694edd2045317ccf3251fa3f2e4a00355de83db5e70ad889b93b3";
 export const TESTNET_GENESIS = "0x10639e0895502b5688a6be8cf69460d76541bfa4821629d86d62ba0aae3f9606";
 export const MAX_BATCH = 50;
-const SPORE_CODE_HASH = "0x685a60219309029d01310311dba953d67029170ca4848a4ff638e57002130a0d";
+export const SPORE_CODE_HASH = "0x685a60219309029d01310311dba953d67029170ca4848a4ff638e57002130a0d";
 export interface MintRecord {
     dna: string;
     sporeId: ccc.Hex;
     outputIndex: number;
 }
-export type MintStatus = "signed" | "submitted" | "committed" | "unknown" | "rejected";
+export type MintStatus = "signed" | "queued" | "submitted" | "committed" | "unknown" | "rejected";
 export interface MintReceipt {
     schema: "seedsong-mint/1";
     createdAt: string;
-    rpcUrl: string;
+    rpcUrl?: string; // Legacy receipt provenance; never used for requests.
+    transport?: "light-client";
     clusterId: string;
     recipient: string;
     txHash: ccc.Hex;
@@ -51,7 +57,7 @@ export interface MintPlan {
     recordCapacity: bigint;
     fee: bigint;
     feeRate: bigint;
-    rpcUrl: string;
+    transport: "light-client";
 }
 interface Operation {
     signal?: AbortSignal;
@@ -89,9 +95,9 @@ export async function generateBatchDna(
         throw new Error("The random source produced too many duplicate DNA values.");
     return [...unique];
 }
-export async function requireTestnet(client: ccc.Client) {
+export async function requireTestnet(client: Pick<ccc.Client, "getHeaderByNumber">) {
     if ((await client.getHeaderByNumber(0))?.hash !== TESTNET_GENESIS)
-        throw new Error("Minting this collection requires a CKB testnet RPC.");
+        throw new Error("Minting this collection requires a CKB testnet light client.");
 }
 async function requireOwner(signer: ccc.Signer, lock: ccc.Script) {
     if (!(await signer.getAddressObjs()).some((address) => address.script.eq(lock))) {
@@ -114,15 +120,19 @@ export async function prepareMint(
     const client = signer.client;
     const progress = (message: string) => {
         cancelled(options.signal);
+        logInfo("Mint", message);
         options.onProgress?.(message);
     };
-    progress("Checking network and Cluster permissions…");
+    progress("Verifying CKB testnet genesis…");
     await requireTestnet(client);
+    progress("Finding the Seedsong Cluster in synchronized chain data…");
     const cluster = await spore.findCluster(client, CLUSTER_ID);
     if (!cluster || cluster.cell.cellOutput.type?.hash() !== CLUSTER_TYPE_HASH)
-        throw new Error("The Seedsong Cluster was not found on this RPC.");
+        throw new Error("The Seedsong Cluster was not found in synchronized light-client data.");
+    progress("Verifying the Cluster Cell is still live…");
     const live = await client.getCellLive(cluster.cell.outPoint, true, false);
     if (!live) throw new Error("The Cluster Cell is no longer live. Prepare again.");
+    progress("Checking Cluster mint permissions and decoder release…");
     const clusterOwner = live.cellOutput.lock;
     const publicMint = isPublicMintLock(clusterOwner);
     if (!publicMint) await requireOwner(signer, clusterOwner);
@@ -136,11 +146,13 @@ export async function prepareMint(
             "The selected decoder differs from this Cluster's release. Load the deployed ZIP in Decoder source before minting.",
         );
     }
+    progress("Requesting the wallet recipient address…");
     const recipient = await signer.getRecommendedAddressObj();
     progress(`Building record 1 / ${dnas.length}…`);
     const content = (dna: string) => new TextEncoder().encode(JSON.stringify({ dna }));
     const base = ccc.Transaction.from({});
-    await base.completeInputsAtLeastOne(signer);
+    progress("Finding the first wallet funding Cell…");
+    await addFundingInput(signer, base);
     let publicProof: PublicMintProof | undefined;
     if (publicMint) {
         if (
@@ -152,15 +164,15 @@ export async function prepareMint(
             );
         }
         progress("Finding a public mint authorization Cell…");
-        const permit = await findPublicMintCell(client, clusterOwner, options.signal);
+        const permit = await findPublicMintCell(client, clusterOwner, options.signal, progress);
         publicProof = addPublicMintProof(base, permit, clusterOwner);
         const acp = await client.getKnownScript(ccc.KnownScript.AnyoneCanPay);
         if (acp.codeHash !== clusterOwner.codeHash || acp.hashType !== clusterOwner.hashType)
-            throw new Error("RPC ACP deployment mismatch.");
+            throw new Error("Testnet ACP deployment mismatch.");
         await base.addCellDepInfos(client, acp.cellDeps);
     } else {
         if ((await base.findInputIndexByLock(clusterOwner, client)) === undefined) {
-            await base.completeInputsAddOne(new ccc.SignerCkbScriptReadonly(client, clusterOwner));
+            await addFundingInput(new ccc.SignerCkbScriptReadonly(client, clusterOwner), base);
         }
         if ((await base.findInputIndexByLock(clusterOwner, client)) === undefined)
             throw new Error("No funding Cell can prove Cluster-owner authorization.");
@@ -178,7 +190,7 @@ export async function prepareMint(
     if (firstIndex < 0) throw new Error("The Spore SDK did not return the first record output.");
     const records: MintRecord[] = [{ dna: dnas[0], sporeId: id, outputIndex: firstIndex }];
     const info = spore.getSporeScriptInfo(client);
-    const actions: ccc.EncodableType<typeof sporeA.Action>[] = [];
+    const actions: ReturnType<typeof sporeA.assembleCreateSporeAction>[] = [];
     // Install the Cluster lock proof once, then append further outputs/actions.
     // This avoids duplicating lock-proxy outputs or querying the Cluster per DNA.
     for (const dna of dnas.slice(1)) {
@@ -202,18 +214,20 @@ export async function prepareMint(
     }
     if (actions.length) tx = await sporeA.prepareSporeTransaction(signer, tx, actions);
     progress("Selecting funding Cells and calculating fees…");
-    await tx.completeFeeBy(signer, feeRate);
+    tx = await completeMintFee(tx, signer, feeRate, options.signal);
     cancelled(options.signal);
     verifyRecords(tx, records);
     if (publicProof) {
         verifyPublicMintProof(tx, publicProof, clusterOwner);
-        const inputs = await Promise.all(tx.inputs.map((input) => input.getCell(client)));
-        if (inputs.filter((cell) => cell.cellOutput.lock.eq(clusterOwner)).length !== 1)
+        const inputs = await Promise.all(
+            tx.inputs.map((input) => client.getCell(input.previousOutput)),
+        );
+        if (inputs.filter((cell) => cell?.cellOutput.lock.eq(clusterOwner)).length !== 1)
             throw new Error(
                 "Wallet funding overlaps the public authorization address. Fund a separate ordinary wallet address.",
             );
     }
-    const fee = await tx.getFee(client);
+    const fee = (await tx.getInputsCapacity(client)) - tx.getOutputsCapacity();
     if (fee < 0n) throw new Error("The mint transaction is not balanced.");
     return {
         tx,
@@ -231,7 +245,7 @@ export async function prepareMint(
         ),
         fee,
         feeRate,
-        rpcUrl: client.url,
+        transport: "light-client",
     };
 }
 export function verifyRecords(tx: ccc.Transaction, records: MintRecord[]) {
@@ -265,6 +279,33 @@ export function verifyRecords(tx: ccc.Transaction, records: MintRecord[]) {
             throw new Error("The transaction changed a reviewed DNA or Cluster.");
     }
 }
+type ChainInputClient = Pick<LightClientCkb, "getCellLiveOnChain">;
+export class UnavailableMintInputError extends Error {
+    constructor(point: ccc.OutPoint) {
+        super(
+            `Input ${point.txHash}:${point.index} is spent or unavailable in synchronized chain data. Prepare a new mint with live inputs; resending these signed bytes cannot repair it.`,
+        );
+        this.name = "UnavailableMintInputError";
+    }
+}
+export async function inspectMintInputs(client: ChainInputClient, tx: ccc.Transaction) {
+    const live: ccc.Cell[] = [];
+    let missing: ccc.OutPoint | undefined;
+    for (const input of tx.inputs) {
+        const cell = await client.getCellLiveOnChain(input.previousOutput);
+        if (cell) live.push(cell);
+        else missing ??= input.previousOutput;
+    }
+    return { live, missing };
+}
+async function requireLiveInputs(client: ccc.Client, tx: ccc.Transaction) {
+    const chain = client as LightClientCkb;
+    if (typeof chain.getCellLiveOnChain !== "function")
+        throw new Error("Mint input checks require the Seedsong light-client adapter.");
+    const { missing } = await inspectMintInputs(chain, tx);
+    if (missing) throw new UnavailableMintInputError(missing);
+}
+
 interface Submission {
     /** Must persist successfully before any broadcast is attempted. */
     persist: (receipt: MintReceipt) => void;
@@ -276,13 +317,14 @@ interface Submission {
 export async function signAndSubmitMint(plan: MintPlan, options: Submission): Promise<MintReceipt> {
     if (plan.tx.hash() !== plan.txHash || options.isCurrent?.() === false)
         throw new Error("The wallet or mint preview changed. Prepare again.");
+    logInfo("Mint", "Rechecking network, authorization Cell and wallet before signing…");
     await requireTestnet(plan.client);
     if (plan.publicProof) {
         verifyPublicMintProof(plan.tx, plan.publicProof, plan.ownerLock);
         const live = await plan.client.getCellLive(plan.publicProof.cell.outPoint, true, true);
         if (
             !live ||
-            !live.cellOutput.eq(plan.publicProof.cell.cellOutput) ||
+            !sameOutput(live.cellOutput, plan.publicProof.cell.cellOutput) ||
             live.outputData !== "0x"
         )
             throw new Error(
@@ -295,6 +337,10 @@ export async function signAndSubmitMint(plan: MintPlan, options: Submission): Pr
     }
     if ((await plan.signer.getRecommendedAddress()) !== plan.recipient)
         throw new Error("Wallet account changed. Prepare again.");
+    logInfo("Mint", "Verifying every input is still live before wallet approval…");
+    options.onProgress?.("Verifying funding and authorization Cells before wallet approval…");
+    await requireLiveInputs(plan.client, plan.tx);
+    logInfo("Mint", "Waiting for wallet approval…");
     options.onProgress?.("Waiting for wallet approval…");
     const signed = await plan.signer.signTransaction(plan.tx.clone());
     if (signed.hash() !== plan.txHash)
@@ -306,7 +352,7 @@ export async function signAndSubmitMint(plan: MintPlan, options: Submission): Pr
     const receipt: MintReceipt = {
         schema: "seedsong-mint/1",
         createdAt: new Date().toISOString(),
-        rpcUrl: plan.rpcUrl,
+        transport: "light-client",
         clusterId: CLUSTER_ID,
         recipient: plan.recipient,
         txHash: signed.hash(),
@@ -316,10 +362,12 @@ export async function signAndSubmitMint(plan: MintPlan, options: Submission): Pr
         recordCapacity: plan.recordCapacity.toString(),
         fee: plan.fee.toString(),
     };
+    logInfo("Mint", `Wallet signed ${receipt.txHash}; saving the receipt before broadcast.`);
     options.persist(receipt);
     options.onUpdate?.(receipt);
     if (options.isCurrent?.() === false) return receipt;
-    options.onProgress?.("Broadcasting the signed transaction…");
+    logInfo("Mint", `Broadcasting signed transaction ${receipt.txHash}…`);
+    options.onProgress?.("Queueing the signed transaction for P2P relay…");
     return broadcast(signed, receipt, plan.client, options);
 }
 async function broadcast(
@@ -330,14 +378,30 @@ async function broadcast(
 ): Promise<MintReceipt> {
     let next: MintReceipt;
     try {
+        options.onProgress?.("Verifying funding and authorization Cells before queueing…");
+        await requireLiveInputs(client, tx);
+        options.onProgress?.("Queueing the signed transaction for P2P relay…");
         const returned = await client.sendTransaction(tx, "passthrough");
         if (returned !== receipt.txHash)
-            throw new Error("RPC returned a different transaction hash.");
-        next = { ...receipt, status: "submitted", message: undefined };
-    } catch (error) {
+            throw new Error("Light client returned a different transaction hash.");
         next = {
             ...receipt,
-            status: "unknown",
+            status: "queued",
+            message:
+                "Queued in this browser's light client. Remote peer acceptance and chain confirmation are not yet verified.",
+        };
+        logInfo(
+            "Mint",
+            `Transaction ${returned} queued locally; remote acceptance is not yet verified.`,
+        );
+    } catch (error) {
+        logWarn(
+            "Mint",
+            `${error instanceof UnavailableMintInputError ? "Input validation rejected transaction" : "Queue result unknown"} ${receipt.txHash}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        next = {
+            ...receipt,
+            status: error instanceof UnavailableMintInputError ? "rejected" : "unknown",
             message: error instanceof Error ? error.message : "The broadcast result is unknown.",
         };
     }
@@ -345,53 +409,84 @@ async function broadcast(
     options.onUpdate?.(next);
     return next;
 }
-/** Query the original RPC. Never creates or sends a transaction. */
-export async function checkMint(receipt: MintReceipt): Promise<MintReceipt> {
-    const owner = ccc.ClientPublicTestnet.open({ urls: [receipt.rpcUrl], timeout: 30_000 });
-    try {
-        await requireTestnet(owner.value);
-        const response = await owner.value.getTransactionNoCache(receipt.txHash);
-        if (!response)
-            return {
-                ...receipt,
-                status: "unknown",
-                message:
-                    "This RPC has not found the transaction yet. Do not create a replacement mint automatically.",
-            };
-        if (response.status === "rejected")
-            return { ...receipt, status: "rejected", message: response.reason };
-        if (response.transaction.hash() !== receipt.txHash)
-            throw new Error("RPC transaction hash mismatch.");
+/** Legacy receipt RPC URLs are ignored; query verified P2P state. */
+export async function checkMint(
+    receipt: MintReceipt,
+    client: Pick<
+        LightClientCkb,
+        "getHeaderByNumber" | "fetchTransactionStatus" | "getCellLiveOnChain"
+    > &
+        Partial<Pick<ccc.Client, "cache">> = getChainClient(),
+): Promise<MintReceipt> {
+    await requireTestnet(client);
+    logInfo("Mint", `Checking transaction status for ${receipt.txHash}…`);
+    const tx = transactionFromBytes(receipt.signedTransaction);
+    if (tx.hash() !== receipt.txHash) throw new Error("Saved signed transaction hash mismatch.");
+    verifyRecords(tx, receipt.records);
+    const response = await client.fetchTransactionStatus(receipt.txHash, tx);
+    logInfo(
+        "Mint",
+        `Transaction ${receipt.txHash}: ${response?.status ?? "proof not yet available"}.`,
+    );
+    if (response?.transaction && response.transaction.hash() !== receipt.txHash)
+        throw new Error("Verified transaction hash mismatch.");
+    if (response?.status === "committed") {
         verifyRecords(response.transaction, receipt.records);
+        return { ...receipt, status: "committed", message: undefined };
+    }
+    const { missing, live } = await inspectMintInputs(client, tx);
+    if (missing) {
+        // The mint itself may have confirmed while its inputs were being checked.
+        const latest = await client.fetchTransactionStatus(receipt.txHash, tx);
+        if (latest?.status === "committed") {
+            if (latest.transaction.hash() !== receipt.txHash)
+                throw new Error("Verified transaction hash mismatch.");
+            verifyRecords(latest.transaction, receipt.records);
+            return { ...receipt, status: "committed", message: undefined };
+        }
+        // Release only the live input reservations of this impossible transaction;
+        // never clear other pending transactions or trust its unconfirmed outputs.
+        if (client.cache) {
+            await client.cache.markUnusable(
+                tx.outputs.map((_, index) => ({ txHash: tx.hash(), index })),
+            );
+            await client.cache.markUsable(live);
+        }
         return {
             ...receipt,
-            status: response.status === "committed" ? "committed" : "submitted",
-            message: undefined,
+            status: "rejected",
+            message: new UnavailableMintInputError(missing).message,
         };
-    } finally {
-        await owner.dispose();
     }
+    if (!response)
+        return {
+            ...receipt,
+            status: "unknown",
+            message:
+                "No verified confirmation proof yet. The inputs are still live; keep the light client connected and check again.",
+        };
+    return {
+        ...receipt,
+        status: "queued",
+        message:
+            "The SDK reports a local pending transaction, not remote acceptance. Its inputs are live; check again for a verified chain confirmation.",
+    };
 }
-/** Recover an uncertain submission by broadcasting the same signed transaction. */
 export async function resubmitMint(
     receipt: MintReceipt,
     options: Submission,
+    client = getChainClient(),
 ): Promise<MintReceipt> {
-    const checked = await checkMint(receipt);
-    if (checked.status !== "unknown") {
+    const checked = await checkMint(receipt, client);
+    if (checked.status === "committed" || checked.status === "rejected") {
         options.persist(checked);
         options.onUpdate?.(checked);
         return checked;
     }
-    const tx = ccc.Transaction.fromBytes(ccc.bytesFrom(receipt.signedTransaction));
+    const tx = transactionFromBytes(receipt.signedTransaction);
     if (tx.hash() !== receipt.txHash) throw new Error("Saved signed transaction hash mismatch.");
     verifyRecords(tx, receipt.records);
-    const owner = ccc.ClientPublicTestnet.open({ urls: [receipt.rpcUrl], timeout: 30_000 });
-    try {
-        return await broadcast(tx, receipt, owner.value, options);
-    } finally {
-        await owner.dispose();
-    }
+    return broadcast(tx, checked, client, options);
 }
 const STORAGE_KEY = "seedsong.mints.v1";
 export function readMintHistory(): MintReceipt[] {
@@ -412,7 +507,16 @@ export function readMintHistory(): MintReceipt[] {
         throw new Error(
             "Saved mint history is unreadable. Export or recover browser storage before minting.",
         );
-    return entries;
+    return (entries as MintReceipt[]).map((entry) =>
+        entry.status === "submitted" && entry.transport === "light-client"
+            ? {
+                  ...entry,
+                  status: "queued",
+                  message:
+                      "Legacy submitted status only confirmed local queueing. Check this transaction for verified chain state.",
+              }
+            : entry,
+    );
 }
 export function saveMintReceipt(receipt: MintReceipt): void {
     const entries = readMintHistory();

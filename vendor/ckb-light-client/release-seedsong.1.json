@@ -1,0 +1,10 @@
+{
+  "packageVersion": "0.5.5-seedsong.1",
+  "sourceRepository": "https://github.com/nervosnetwork/ckb-light-client",
+  "sourceCommit": "b916c252296b584fb38c3794e50c703327946b8f",
+  "patchSha256": "7cd051755f15c23edf60c0b7924ec75765e9c7c608aec67cb2700243ba434894",
+  "archive": "nervosnetwork-ckb-light-client-js-0.5.5-seedsong.1.tgz",
+  "archiveSha256": "e9b54112a9d701a9c03ef4974a1658531779d534680417bc34bb75e59eb2ffd4",
+  "wasmSha256": "7d3e359ee4aa1173f48a54db62bbdda1aa9d50c5dd353ba9ed6f03476fdbbc49",
+  "bundleSha256": "e8aec120b4e1a4040ad4b68bb162857112989b46d451a61b0d4e842594289d4e"
+}

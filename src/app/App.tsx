@@ -1,6 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    Alert,
     Box,
     Container,
     CssBaseline,
@@ -10,7 +9,13 @@ import {
     ThemeProvider,
     Typography,
 } from "@mui/material";
-import { AutoAwesomeOutlined, HelpOutlineRounded, AlbumOutlined } from "@mui/icons-material";
+import {
+    AutoAwesomeOutlined,
+    HelpOutlineRounded,
+    AlbumOutlined,
+    SettingsOutlined,
+    CollectionsOutlined,
+} from "@mui/icons-material";
 import { makeTheme } from "./theme";
 import { setPatterns } from "./common/patterns";
 import DecoderPanel from "./decoder/DecoderPanel";
@@ -23,14 +28,19 @@ import Header from "./views/Header";
 import CreateView from "./views/create/CreateView";
 import HelpView from "./views/help/HelpView";
 import { REFERENCE_DNA } from "./common/dna";
-const MintView = lazy(() => import("./mint/MintView"));
+import LightClientPanel from "./chain/LightClientPanel";
+import ErrorNotice from "./common/ErrorNotice";
+import { errorMessage, isAbortError } from "./common/errors";
+import LogPanel from "./diagnostics/LogPanel";
+import { logInfo, logError } from "./diagnostics/logs";
+const WalletViews = lazy(() => import("./wallet/WalletViews"));
 
 export default function App() {
     const [dark, setDark] = useState(
         () => window.matchMedia("(prefers-color-scheme: dark)").matches,
     );
     const [tab, setTab] = useState(0);
-    const [mintOpened, setMintOpened] = useState(false);
+    const [walletOpened, setWalletOpened] = useState(false);
     const [mintDna, setMintDna] = useState(REFERENCE_DNA);
     const [mintBusy, setMintBusy] = useState(false);
     const [initial] = useState(readSettings);
@@ -52,7 +62,10 @@ export default function App() {
         try {
             const settings = normalizeSettings(input);
             engine = new DecoderEngine(settings, (message) => {
-                if (sequence.current === id) setProgress(message);
+                if (sequence.current === id) {
+                    setProgress(message);
+                    logInfo("Decoder", message);
+                }
             });
             pending.current = engine;
             const info = await engine.initialize();
@@ -66,6 +79,7 @@ export default function App() {
             active.current = next;
             pending.current = null;
             setDecoder(next);
+            logInfo("Decoder", `Decoder initialized successfully (${settings.source}).`);
             if (previous) closeSession(previous);
             try {
                 localStorage.setItem("seedsong.decoder", JSON.stringify(settings));
@@ -74,10 +88,10 @@ export default function App() {
             }
         } catch (error) {
             engine?.dispose();
-            if (sequence.current === id && (error as Error).name !== "AbortError")
-                setLoadError(
-                    error instanceof Error ? error.message : "Could not load the decoder.",
-                );
+            if (sequence.current === id && !isAbortError(error)) {
+                logError("Decoder", errorMessage(error));
+                setLoadError(errorMessage(error));
+            }
         } finally {
             if (sequence.current === id) {
                 pending.current = null;
@@ -86,6 +100,7 @@ export default function App() {
         }
     }, []);
     const cancelLoading = useCallback(() => {
+        logInfo("Decoder", "Decoder loading cancelled.");
         sequence.current++;
         pending.current?.dispose();
         pending.current = null;
@@ -115,6 +130,7 @@ export default function App() {
     return (
         <ThemeProvider theme={theme}>
             <CssBaseline />
+            <LogPanel />
             <Header dark={dark} onToggleTheme={() => setDark(!dark)} />
             <Box sx={{ bgcolor: "background.paper", borderBottom: 1, borderColor: "divider" }}>
                 <Container maxWidth="xl">
@@ -122,8 +138,10 @@ export default function App() {
                         value={tab}
                         onChange={(_, value: number) => {
                             setTab(value);
-                            if (value === 2) setMintOpened(true);
+                            if (value === 2 || value === 3) setWalletOpened(true);
                         }}
+                        variant="scrollable"
+                        scrollButtons="auto"
                         aria-label="Main navigation"
                     >
                         <Tab
@@ -147,20 +165,23 @@ export default function App() {
                             iconPosition="start"
                             label="Mint"
                         />
+                        <Tab
+                            id="tab-gallery"
+                            aria-controls="panel-gallery"
+                            icon={<CollectionsOutlined sx={{ fontSize: 18 }} />}
+                            iconPosition="start"
+                            label="Gallery"
+                        />
+                        <Tab
+                            id="tab-settings"
+                            aria-controls="panel-settings"
+                            icon={<SettingsOutlined sx={{ fontSize: 18 }} />}
+                            iconPosition="start"
+                            label="Settings"
+                        />
                     </Tabs>
                 </Container>
             </Box>
-            <Container maxWidth="xl" inert={mintBusy}>
-                <DecoderPanel
-                    initial={initial}
-                    active={decoder}
-                    loading={loading}
-                    progress={progress}
-                    error={loadError}
-                    onLoad={load}
-                    onCancel={cancelLoading}
-                />
-            </Container>
             <Box component="main">
                 <Box
                     role="tabpanel"
@@ -175,7 +196,7 @@ export default function App() {
                             onMint={(dna) => {
                                 if (!mintBusy) {
                                     setMintDna(dna);
-                                    setMintOpened(true);
+                                    setWalletOpened(true);
                                     setTab(2);
                                 }
                             }}
@@ -183,9 +204,12 @@ export default function App() {
                     ) : (
                         <Container maxWidth="sm" sx={{ py: 8, textAlign: "center" }}>
                             {loadError && (
-                                <Alert severity="error" sx={{ mb: 2 }}>
-                                    {loadError}
-                                </Alert>
+                                <Box sx={{ mb: 2 }}>
+                                    <ErrorNotice
+                                        error={loadError}
+                                        context="Could not load the decoder"
+                                    />
+                                </Box>
                             )}
                             <BusyButton
                                 variant="outlined"
@@ -201,24 +225,51 @@ export default function App() {
                 <Box role="tabpanel" id="panel-help" aria-labelledby="tab-help" hidden={tab !== 1}>
                     {tab === 1 && decoder && <HelpView decoder={decoder} />}
                 </Box>
-                <Box role="tabpanel" id="panel-mint" aria-labelledby="tab-mint" hidden={tab !== 2}>
-                    {mintOpened && (
-                        <Suspense
-                            fallback={
+                {walletOpened && (
+                    <Suspense
+                        fallback={
+                            tab === 2 || tab === 3 ? (
                                 <Box sx={{ p: 6, textAlign: "center" }}>
-                                    <CircularProgress aria-label="Loading mint interface" />
+                                    <CircularProgress aria-label="Loading wallet interface" />
                                 </Box>
-                            }
-                        >
-                            <MintView
-                                dna={mintDna}
-                                onDnaChange={setMintDna}
-                                decoder={decoder}
-                                sourceBusy={loading}
-                                onBusy={setMintBusy}
+                            ) : null
+                        }
+                    >
+                        <WalletViews
+                            tab={tab}
+                            dna={mintDna}
+                            onDnaChange={setMintDna}
+                            decoder={decoder}
+                            sourceBusy={loading}
+                            mintBusy={mintBusy}
+                            onBusy={setMintBusy}
+                        />
+                    </Suspense>
+                )}
+                <Box
+                    role="tabpanel"
+                    id="panel-settings"
+                    aria-labelledby="tab-settings"
+                    hidden={tab !== 4}
+                >
+                    <Container maxWidth="lg" sx={{ py: 4 }}>
+                        <Typography variant="h4">Settings</Typography>
+                        <Typography color="text.secondary" sx={{ mt: 1 }}>
+                            Manage the CKB light client and choose your decoder source.
+                        </Typography>
+                        <LightClientPanel busy={mintBusy || loading} />
+                        <Box inert={mintBusy}>
+                            <DecoderPanel
+                                initial={initial}
+                                active={decoder}
+                                loading={loading}
+                                progress={progress}
+                                error={loadError}
+                                onLoad={load}
+                                onCancel={cancelLoading}
                             />
-                        </Suspense>
-                    )}
+                        </Box>
+                    </Container>
                 </Box>
             </Box>
             <Container maxWidth="xl">

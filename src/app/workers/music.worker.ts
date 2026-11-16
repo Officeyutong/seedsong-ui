@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
+import "../../polyfills";
 import type { Seedsong, Dob0Pattern, Dob1Pattern } from "seedsong-js";
 import bundledManifest from "../../../vendor/seedsong-base/wasm/seedsong-js/dist/decoder.json?raw";
-import { fetchDecoder } from "../decoder/archive";
-import type { DecoderPackage, DecoderSettings } from "../decoder/types";
+import { unpackDecoder } from "../decoder/archive";
+import type { DecoderPackage, DecoderSettings, DecoderArchive } from "../decoder/types";
 import type { MusicRequest, MusicResponse } from "./types";
 import { parsePatternDocument } from "../common/patterns";
 import { patternUrl, musicSpecUrl, legacySpecUrl } from "../common/specifications";
@@ -19,12 +20,17 @@ async function document(url: string) {
     return response.text();
 }
 async function initialize(
-    source: DecoderSettings | DecoderPackage,
+    source: DecoderSettings | DecoderPackage | DecoderArchive,
     progress: (message: string) => void,
 ): Promise<DecoderPackage> {
     let bundle: DecoderPackage;
     if ("documents" in source) bundle = source;
-    else if (source.source === "chain") bundle = await fetchDecoder(source, progress);
+    else if ("archive" in source) {
+        progress("Unpacking and checking decoder files…");
+        bundle = await unpackDecoder(source.archive);
+        bundle.reference = { ...bundle.reference, ...source.reference };
+    } else if (source.source === "chain")
+        throw new Error("Fetch the archive through the shared light client first.");
     else {
         progress("Loading bundled decoder and documents…");
         const [pattern, music, legacy] = await Promise.all([

@@ -1,6 +1,8 @@
 import type { RenderOptions, RenderedWav } from "seedsong-js";
 import type { MusicCommand, MusicResponse, MusicValue } from "../workers/types";
 import type { CoverResult, DecoderInfo, DecoderPackage, DecoderSettings } from "./types";
+import { fetchDecoderArchive } from "./chain";
+import { abortable } from "../chain/runtime";
 type Pending = {
     resolve: (value: MusicValue) => void;
     reject: (error: Error) => void;
@@ -15,11 +17,18 @@ export class DecoderEngine {
     private info: DecoderInfo | null = null;
     private cached: DecoderPackage | null = null;
     private closed = false;
+    private fetchAbort: AbortController | null = null;
     readonly settings: DecoderSettings;
     private progress: (message: string) => void;
     constructor(settings: DecoderSettings, progress: (message: string) => void = () => {}) {
         this.settings = settings;
         this.progress = progress;
+    }
+    /** Independent Worker sharing only the already verified decoder package. */
+    fork(): DecoderEngine {
+        const engine = new DecoderEngine(this.settings);
+        engine.cached = this.cached;
+        return engine;
     }
     get ready() {
         return !!this.worker && !!this.info;
@@ -30,7 +39,9 @@ export class DecoderEngine {
             const timer = setTimeout(
                 () =>
                     this.cancel(
-                        new Error("The decoder operation timed out. Check the RPC or try again."),
+                        new Error(
+                            "The decoder operation timed out. Check light-client synchronization or try again.",
+                        ),
                     ),
                 120_000,
             );
@@ -75,7 +86,20 @@ export class DecoderEngine {
                 "The decoder Worker could not run. Check module and WebAssembly permissions, then retry.",
             );
         worker.onmessageerror = () => fail("Could not read a decoder Worker response.");
-        const boot = this.send({ type: "init", source: this.cached ?? this.settings })
+        const abort = new AbortController();
+        this.fetchAbort = abort;
+        const source = this.cached ?? this.settings;
+        const boot = (async () => {
+            const input =
+                !("documents" in source) && source.source === "chain"
+                    ? await abortable(
+                          fetchDecoderArchive(source, this.progress, abort.signal),
+                          abort.signal,
+                      )
+                    : source;
+            abort.signal.throwIfAborted();
+            return this.send({ type: "init", source: input });
+        })()
             .then((value) => {
                 if (this.worker !== worker)
                     throw new DOMException("Decoder loading was cancelled", "AbortError");
@@ -109,6 +133,8 @@ export class DecoderEngine {
         return (await this.request({ type: "cover", dna })) as CoverResult;
     }
     cancel(error: Error = new DOMException("Rendering was cancelled", "AbortError")) {
+        this.fetchAbort?.abort(error);
+        this.fetchAbort = null;
         this.worker?.terminate();
         this.worker = null;
         this.info = null;

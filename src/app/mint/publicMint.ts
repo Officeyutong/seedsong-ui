@@ -34,7 +34,7 @@ export function addPublicMintProof(
         );
     }
     const outputIndex = tx.outputs.length;
-    tx.addInput(cell);
+    tx.inputs.push(ccc.CellInput.from({ previousOutput: cell.outPoint, ...cell }));
     tx.addOutput(cell.cellOutput.clone(), cell.outputData);
     const proof = { cell, outputIndex };
     verifyPublicMintProof(tx, proof, lock);
@@ -63,13 +63,17 @@ export function verifyPublicMintProof(
         throw new Error("The transaction changed the public mint authorization Cell.");
     }
 }
-/** Indexer candidates are checked against the transaction pool before use. */
+/** Check synchronized chain state and locally submitted pending inputs. */
 export async function findPublicMintCell(
     client: ccc.Client,
     lock: ccc.Script,
     signal?: AbortSignal,
+    onProgress?: (message: string) => void,
 ): Promise<ccc.Cell> {
     let scanned = 0;
+    onProgress?.(
+        "Synchronizing the public mint authorization script and querying available Cells…",
+    );
     for await (const candidate of client.findCells(
         {
             script: lock,
@@ -82,6 +86,7 @@ export async function findPublicMintCell(
         16,
     )) {
         signal?.throwIfAborted();
+        onProgress?.(`Verifying public mint authorization Cell ${scanned + 1}…`);
         const live = await client.getCellLive(candidate.outPoint, true, true);
         if (
             live &&

@@ -26,6 +26,7 @@ interface Props {
     onLoad: (settings: DecoderSettings) => Promise<void>;
     onCancel: () => void;
 }
+import ErrorNotice from "../common/ErrorNotice";
 export default function DecoderPanel({
     initial,
     active,
@@ -91,14 +92,6 @@ export default function DecoderPanel({
                     </TextField>
                     {draft.source === "chain" && (
                         <>
-                            <TextField
-                                label="CKB RPC endpoint"
-                                type="url"
-                                value={draft.rpcUrl}
-                                disabled={loading}
-                                onChange={(e) => setDraft({ ...draft, rpcUrl: e.target.value })}
-                                helperText="Defaults to the public testnet RPC. Custom endpoints must allow browser CORS requests."
-                            />
                             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
                                 <TextField
                                     fullWidth
@@ -121,13 +114,14 @@ export default function DecoderPanel({
                                 />
                             </Stack>
                             <Typography variant="body2" color="text.secondary">
-                                Downloads and runs the JS/WASM decoder stored in the selected Cell.
-                                Its patterns and music specifications replace the bundled documents
-                                after loading succeeds.
+                                Fetches and verifies the Cell through the browser’s light client,
+                                then runs its JS/WASM decoder. Its patterns and music specifications
+                                replace the bundled documents after loading succeeds.
                             </Typography>
                         </>
                     )}
-                    {(validation || error) && <Alert severity="error">{validation || error}</Alert>}
+                    {validation && <Alert severity="error">{validation}</Alert>}
+                    {error && <ErrorNotice error={error} context="Could not load the decoder" />}
                     <Stack direction="row" spacing={1}>
                         <BusyButton
                             variant="contained"
@@ -154,7 +148,7 @@ export default function DecoderPanel({
                                         sx={{ display: "block" }}
                                         color="text.secondary"
                                     >
-                                        RPC: {reference.rpcUrl}
+                                        Transport: verified light-client P2P
                                     </Typography>
                                     <Typography
                                         variant="caption"

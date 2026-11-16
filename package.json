@@ -15,9 +15,9 @@
     "format:check": "prettier --check src scripts test playwright.config.ts vite.config.ts"
   },
   "dependencies": {
-    "@ckb-ccc/connector-react": "^2.2.2",
-    "@ckb-ccc/core": "^1.23.0",
-    "@ckb-ccc/spore": "^1.6.15",
+    "@ckb-ccc/connector-react": "0.0.17-alpha.10",
+    "@ckb-ccc/core": "0.1.0-alpha.6",
+    "@ckb-ccc/spore": "0.1.0-alpha.4",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
     "@mui/icons-material": "^9.5.0",
@@ -25,7 +25,14 @@
     "fflate": "^0.8.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "seedsong-js": "file:vendor/seedsong-base/wasm/seedsong-js"
+    "seedsong-js": "file:vendor/seedsong-base/wasm/seedsong-js",
+    "@nervosnetwork/ckb-light-client-js": "file:vendor/ckb-light-client/nervosnetwork-ckb-light-client-js-0.5.5-pr308.fef3c51.tgz",
+    "@ckb-lumos/base": "0.24.0-next.2",
+    "buffer": "6.0.3",
+    "process": "0.11.10",
+    "stream-browserify": "3.0.0",
+    "events": "3.3.0",
+    "console-feed": "3.8.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

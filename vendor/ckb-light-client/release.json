@@ -1,0 +1,12 @@
+{
+  "packageVersion": "0.5.5-pr308.fef3c51",
+  "sourceRepository": "https://github.com/Officeyutong/ckb-light-client",
+  "sourcePullRequest": "https://github.com/nervosnetwork/ckb-light-client/pull/308",
+  "sourceBranch": "fix/historical-script-replay",
+  "sourceCommit": "fef3c51e847631f6a25550b09c709f233bf2d035",
+  "requiresIndexRepair": false,
+  "archive": "nervosnetwork-ckb-light-client-js-0.5.5-pr308.fef3c51.tgz",
+  "archiveSha256": "0c54c9bb2d347a088e72f6b3e3bf19f74318c65eff019be55adbee906b8b9129",
+  "wasmSha256": "979a0de4549e30a8822a3099488d2699b1c174f935e9b6a9c0eba3695f6636f6",
+  "bundleSha256": "1ffe19e4b5ab2a89a437f1f9ee660b04f4028e4d5e0c38ab91cce3d49813c437"
+}
