@@ -1,0 +1,6 @@
+# Cloudflare Pages parses this file from the deployed static output root.
+# Vite copies public/_headers to dist/_headers; publish the contents of dist/.
+# Apply isolation to the HTML document and every Worker/static asset.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
